@@ -1,9 +1,5 @@
-import av
-import cv2
-import numpy as np
 import streamlit as st
-from streamlit_webrtc import webrtc_streamer, WebRtcMode, VideoProcessorBase
-from pyzbar.pyzbar import decode as zbar_decode
+
 
 # =========================
 # CONFIGURA AQUÍ TU FORM
@@ -127,3 +123,4 @@ st.html(f"""
 </body>
 </html>
 """)
+
