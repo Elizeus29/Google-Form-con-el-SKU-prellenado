@@ -9,6 +9,13 @@ ENTRY_SKU = "entry.5441271"  # <- reemplaza por el entry real de tu campo SKU
 # =========================
 
 
+import streamlit as st
+
+# ======= CONFIG =======
+FORM_URL = "https://docs.google.com/forms/d/e/TU_FORM_ID/viewform"  # <- tu Form
+ENTRY_SKU = "entry.1234567890"                                      # <- tu entry SKU
+# ======================
+
 st.set_page_config(page_title="Escáner SKU", layout="centered")
 st.markdown("<style>.block-container{padding:0} header,footer{display:none}</style>", unsafe_allow_html=True)
 
@@ -17,12 +24,13 @@ st.html(f"""
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <style>
     :root {{ --bg:#0b0f1a; --card:#111827; --ink:#fff; --accent:#2563eb; --stroke:#374151; }}
+    * {{ box-sizing:border-box }}
     body {{ margin:0; background:var(--bg); color:var(--ink); font-family: system-ui, Arial, sans-serif; }}
-    .wrap {{ max-width: 720px; margin: 0 auto; padding: 12px; }}
-    .card {{ background:var(--card); border-radius:16px; padding:14px; box-shadow:0 10px 30px rgba(0,0,0,.3); }}
+    .wrap {{ max-width: 720px; margin: 0 auto; padding: 10px; }}
+    .card {{ background:var(--card); border-radius:16px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.3); }}
     video {{ width:100%; border-radius:12px; background:#000; }}
     .row {{ display:flex; gap:8px; margin:10px 0; align-items:center; }}
     .btn {{ padding:10px 14px; border-radius:10px; border:0; cursor:pointer; background:var(--accent); color:#fff; font-weight:600; }}
@@ -38,7 +46,7 @@ st.html(f"""
         <button class="btn" id="startBtn">Iniciar cámara</button>
         <button class="btn" id="flipBtn">Cambiar</button>
       </div>
-      <video id="preview" playsinline muted></video>
+      <video id="preview" playsinline muted autoplay></video>
       <div class="row">
         <input id="sku" class="input" placeholder="SKU…" readonly />
         <a class="btn" id="openLink" href="#" target="_blank" rel="noopener" aria-disabled="true">Abrir Form</a>
@@ -51,16 +59,25 @@ st.html(f"""
     const FORM_URL = "{FORM_URL}";
     const ENTRY_SKU = "{ENTRY_SKU}";
 
+    // --- Elementos ---
     const codeReader = new ZXing.BrowserMultiFormatReader();
     const videoEl = document.getElementById('preview');
     const startBtn = document.getElementById('startBtn');
-    const flipBtn = document.getElementById('flipBtn');
-    const skuEl = document.getElementById('sku');
+    const flipBtn  = document.getElementById('flipBtn');
+    const skuEl    = document.getElementById('sku');
     const openLink = document.getElementById('openLink');
 
+    // --- Estado ---
     let devices = [];
     let currentDeviceId = null;
     let running = false;
+    let currentStream = null;
+
+    // --- Utilidades ---
+    function isChromeMobile() {{
+      const ua = navigator.userAgent.toLowerCase();
+      return /android/.test(ua) && /chrome\\//.test(ua) && !/edg\\//.test(ua);
+    }}
 
     function updateOpenLink(value) {{
       if (!value) {{
@@ -74,42 +91,55 @@ st.html(f"""
       openLink.removeAttribute('aria-disabled');
     }}
 
-    async function requestPermissionAndWarmup() {{
-      // Precalienta permisos con facingMode "environment"
-      // iOS/Android requieren gesto + getUserMedia previo
+    async function stopCurrentStream() {{
+      try {{
+        codeReader.reset();
+      }} catch (e) {{}}
+      if (currentStream) {{
+        currentStream.getTracks().forEach(t => t.stop());
+        currentStream = null;
+      }}
+      running = false;
+    }}
+
+    async function warmUpWithFacingMode() {{
+      // Pre-permiso + pre-view para desbloquear Chrome/iOS
       const constraints = {{
         video: {{
           facingMode: {{ ideal: "environment" }},
           width: {{ ideal: 1280 }},
-          height: {{ ideal: 720 }}
+          height: {{ ideal: 720 }},
+          focusMode: "continuous",
+          advanced: [
+            {{ facingMode: "environment" }},
+          ]
         }},
         audio: false
       }};
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      // muestra el stream de inmediato mientras ZXing arranca
+      currentStream = stream;
       videoEl.srcObject = stream;
-      await videoEl.play().catch(() => {{ /* ignore autoplay issues */ }});
+      await videoEl.play().catch(() => {{}});
       return stream;
     }}
 
     async function listCameras() {{
+      // Importante: enumerateDevices solo devuelve deviceId después de un getUserMedia exitoso
       const inputs = await ZXing.BrowserCodeReader.listVideoInputDevices();
       devices = inputs || [];
       if (!devices.length) throw new Error("No hay cámaras disponibles");
-      if (!currentDeviceId) {{
-        // intenta trasera: la última suele ser la trasera
-        currentDeviceId = devices[devices.length - 1].deviceId;
-      }}
+      // Preferimos la trasera (suele venir al final en Android)
+      if (!currentDeviceId) currentDeviceId = devices[devices.length - 1].deviceId;
     }}
 
-    async function startWithConstraints() {{
-      // Camino 1 (preferido): decode con constraints + facingMode (mejor en Safari/iOS)
+    async function tryDecodeWithConstraints() {{
+      // Camino 1 (ideal para Chrome/iOS): constraints + facingMode environment
       await codeReader.decodeFromConstraints(
         {{
           video: {{
             facingMode: {{ ideal: "environment" }},
             width: {{ ideal: 1280 }},
-            height: {{ ideal: 720 }}
+            height: {{ ideal: 720 }},
           }},
           audio: false
         }},
@@ -127,10 +157,9 @@ st.html(f"""
       running = true;
     }}
 
-    async function startWithDeviceId() {{
-      // Camino 2 (fallback): usa deviceId explícito
-      await listCameras();
-      await codeReader.decodeFromVideoDevice(currentDeviceId, videoEl, (result, err) => {{
+    async function tryDecodeWithDeviceId(id) {{
+      // Camino 2 (forzado para Chrome): usamos deviceId exacto
+      await codeReader.decodeFromVideoDevice(id, videoEl, (result, err) => {{
         if (result) {{
           const value = (result.getText() || "").trim();
           if (value) {{
@@ -144,28 +173,41 @@ st.html(f"""
 
     async function startScan() {{
       try {{
-        // 0) Verifica APIs
         if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
           throw new Error("Este navegador no permite acceso a la cámara");
         }}
 
-        // 1) Pide permiso y muestra stream (desbloquea iOS/Android)
-        await requestPermissionAndWarmup();
+        // 1) Precalienta permisos/preview (desbloquea enumerateDevices completo)
+        await warmUpWithFacingMode();
+        await listCameras();
 
-        // 2) Primero intenta constraints (mejor soporte en Safari)
-        try {{
-          await startWithConstraints();
-          return;
-        }} catch (e) {{
-          // sigue al fallback
+        // 2) Chrome móvil: intenta deviceId explícito primero (más estable)
+        if (isChromeMobile()) {{
+          try {{
+            await stopCurrentStream();
+            await tryDecodeWithDeviceId(currentDeviceId);
+            return;
+          }} catch (e) {{
+            console.warn("deviceId directo falló, probando constraints…", e);
+          }}
         }}
 
-        // 3) Fallback a deviceId
-        await startWithDeviceId();
+        // 3) Constraints con environment (funciona muy bien en Safari/Chrome modernos)
+        try {{
+          // mantener stream existente como vista inicial
+          await tryDecodeWithConstraints();
+          return;
+        }} catch (e) {{
+          console.warn("constraints falló, probando deviceId…", e);
+        }}
+
+        // 4) Fallback final: deviceId (si no veníamos de Chrome o constraints falló)
+        await stopCurrentStream();
+        await tryDecodeWithDeviceId(currentDeviceId);
+
       }} catch (e) {{
-        // Muestra error mínimo sin textos extras invasivos
-        console.log("No se pudo iniciar la cámara:", e);
-        alert("No se pudo iniciar la cámara. Revisa permisos del navegador para la cámara y vuelve a intentarlo.");
+        console.error("No se pudo iniciar la cámara:", e);
+        alert("No se pudo iniciar la cámara. Verifica permisos del navegador para la cámara (Ajustes del sitio) y vuelve a intentar.");
       }}
     }}
 
@@ -176,21 +218,24 @@ st.html(f"""
 
     flipBtn.addEventListener('click', async () => {{
       try {{
-        if (!devices.length) await listCameras();
+        await listCameras();
         const idx = devices.findIndex(d => d.deviceId === currentDeviceId);
         currentDeviceId = devices[(idx + 1) % devices.length].deviceId;
-        codeReader.reset();
-        running = false;
-        await startWithDeviceId();
+        await stopCurrentStream();
+        // En Chrome insistimos en deviceId al cambiar cámara
+        if (isChromeMobile()) {{
+          await tryDecodeWithDeviceId(currentDeviceId);
+        }} else {{
+          await tryDecodeWithConstraints();
+        }}
       }} catch (e) {{
-        console.log("No se pudo cambiar de cámara:", e);
+        console.error("No se pudo cambiar de cámara:", e);
         alert("No se pudo cambiar de cámara.");
       }}
     }});
 
     window.addEventListener('pagehide', () => {{
-      try {{ codeReader.reset(); }} catch (e) {{}}
-      running = false;
+      stopCurrentStream();
     }});
   </script>
 </body>
