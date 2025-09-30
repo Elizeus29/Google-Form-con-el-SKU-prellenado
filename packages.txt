@@ -1,6 +1,12 @@
-libzbar0
 ffmpeg
+libzbar0
 libsrtp2-1
+libavformat58
+libavcodec58
+libavdevice58
+libavutil56
+libswscale5
+libswresample3
 libglib2.0-0
 libgl1
 libsm6
