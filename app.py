@@ -10,13 +10,8 @@ ENTRY_SKU = "entry.5441271"  # <- reemplaza por el entry real de tu campo SKU
 
 
 st.set_page_config(page_title="Escáner SKU", layout="centered")
-# Oculta padding, header y footer para UI limpia
-st.markdown(
-    "<style>.block-container{padding:0} header,footer{display:none}</style>",
-    unsafe_allow_html=True,
-)
+st.markdown("<style>.block-container{padding:0} header,footer{display:none}</style>", unsafe_allow_html=True)
 
-# Usamos st.html (no iframe sandbox) para que getUserMedia funcione en móvil
 st.html(f"""
 <!doctype html>
 <html lang="es">
@@ -43,7 +38,7 @@ st.html(f"""
         <button class="btn" id="startBtn">Iniciar cámara</button>
         <button class="btn" id="flipBtn">Cambiar</button>
       </div>
-      <video id="preview" playsinline></video>
+      <video id="preview" playsinline muted></video>
       <div class="row">
         <input id="sku" class="input" placeholder="SKU…" readonly />
         <a class="btn" id="openLink" href="#" target="_blank" rel="noopener" aria-disabled="true">Abrir Form</a>
@@ -51,7 +46,6 @@ st.html(f"""
     </div>
   </div>
 
-  <!-- ZXing (lector de códigos) -->
   <script src="https://cdn.jsdelivr.net/npm/@zxing/library@latest"></script>
   <script>
     const FORM_URL = "{FORM_URL}";
@@ -66,6 +60,7 @@ st.html(f"""
 
     let devices = [];
     let currentDeviceId = null;
+    let running = false;
 
     function updateOpenLink(value) {{
       if (!value) {{
@@ -79,31 +74,105 @@ st.html(f"""
       openLink.removeAttribute('aria-disabled');
     }}
 
+    async function requestPermissionAndWarmup() {{
+      // Precalienta permisos con facingMode "environment"
+      // iOS/Android requieren gesto + getUserMedia previo
+      const constraints = {{
+        video: {{
+          facingMode: {{ ideal: "environment" }},
+          width: {{ ideal: 1280 }},
+          height: {{ ideal: 720 }}
+        }},
+        audio: false
+      }};
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      // muestra el stream de inmediato mientras ZXing arranca
+      videoEl.srcObject = stream;
+      await videoEl.play().catch(() => {{ /* ignore autoplay issues */ }});
+      return stream;
+    }}
+
     async function listCameras() {{
       const inputs = await ZXing.BrowserCodeReader.listVideoInputDevices();
-      if (!inputs.length) throw new Error("No hay cámaras disponibles");
-      devices = inputs;
-      if (!currentDeviceId) currentDeviceId = devices[devices.length - 1].deviceId; // cámara trasera si existe
+      devices = inputs || [];
+      if (!devices.length) throw new Error("No hay cámaras disponibles");
+      if (!currentDeviceId) {{
+        // intenta trasera: la última suele ser la trasera
+        currentDeviceId = devices[devices.length - 1].deviceId;
+      }}
+    }}
+
+    async function startWithConstraints() {{
+      // Camino 1 (preferido): decode con constraints + facingMode (mejor en Safari/iOS)
+      await codeReader.decodeFromConstraints(
+        {{
+          video: {{
+            facingMode: {{ ideal: "environment" }},
+            width: {{ ideal: 1280 }},
+            height: {{ ideal: 720 }}
+          }},
+          audio: false
+        }},
+        videoEl,
+        (result, err) => {{
+          if (result) {{
+            const value = (result.getText() || "").trim();
+            if (value) {{
+              skuEl.value = value;
+              updateOpenLink(value);
+            }}
+          }}
+        }}
+      );
+      running = true;
+    }}
+
+    async function startWithDeviceId() {{
+      // Camino 2 (fallback): usa deviceId explícito
+      await listCameras();
+      await codeReader.decodeFromVideoDevice(currentDeviceId, videoEl, (result, err) => {{
+        if (result) {{
+          const value = (result.getText() || "").trim();
+          if (value) {{
+            skuEl.value = value;
+            updateOpenLink(value);
+          }}
+        }}
+      }});
+      running = true;
     }}
 
     async function startScan() {{
       try {{
-        await listCameras();
-        await codeReader.decodeFromVideoDevice(currentDeviceId, videoEl, (result, err) => {{
-          if (result) {{
-            const value = (result.getText() || '').trim();
-            if (value) {{
-              skuEl.value = value;       // captura automática
-              updateOpenLink(value);     // habilita botón al Form
-            }}
-          }}
-        }});
+        // 0) Verifica APIs
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
+          throw new Error("Este navegador no permite acceso a la cámara");
+        }}
+
+        // 1) Pide permiso y muestra stream (desbloquea iOS/Android)
+        await requestPermissionAndWarmup();
+
+        // 2) Primero intenta constraints (mejor soporte en Safari)
+        try {{
+          await startWithConstraints();
+          return;
+        }} catch (e) {{
+          // sigue al fallback
+        }}
+
+        // 3) Fallback a deviceId
+        await startWithDeviceId();
       }} catch (e) {{
-        alert("No se pudo iniciar la cámara: " + e.message + "\\n(Usa https y permite la cámara en el navegador)");
+        // Muestra error mínimo sin textos extras invasivos
+        console.log("No se pudo iniciar la cámara:", e);
+        alert("No se pudo iniciar la cámara. Revisa permisos del navegador para la cámara y vuelve a intentarlo.");
       }}
     }}
 
-    startBtn.addEventListener('click', startScan);
+    startBtn.addEventListener('click', async () => {{
+      if (running) return;
+      await startScan();
+    }});
 
     flipBtn.addEventListener('click', async () => {{
       try {{
@@ -111,16 +180,19 @@ st.html(f"""
         const idx = devices.findIndex(d => d.deviceId === currentDeviceId);
         currentDeviceId = devices[(idx + 1) % devices.length].deviceId;
         codeReader.reset();
-        startScan();
+        running = false;
+        await startWithDeviceId();
       }} catch (e) {{
-        alert("No se pudo cambiar de cámara: " + e.message);
+        console.log("No se pudo cambiar de cámara:", e);
+        alert("No se pudo cambiar de cámara.");
       }}
     }});
 
-    // Limpia la cámara al salir
-    window.addEventListener('pagehide', () => codeReader.reset());
+    window.addEventListener('pagehide', () => {{
+      try {{ codeReader.reset(); }} catch (e) {{}}
+      running = false;
+    }});
   </script>
 </body>
 </html>
 """)
-
