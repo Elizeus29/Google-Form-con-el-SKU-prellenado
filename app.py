@@ -14,77 +14,116 @@ ENTRY_SKU = "entry.5441271"  # <- reemplaza por el entry real de tu campo SKU
 
 
 st.set_page_config(page_title="Escáner SKU", layout="centered")
-
-# UI minimalista
+# Oculta padding, header y footer para UI limpia
 st.markdown(
-    """
-    <style>
-      .block-container{padding-top:0.8rem;padding-bottom:0.8rem}
-      header, footer {display:none;}
-      .stButton > button {font-weight:600}
-    </style>
-    """,
+    "<style>.block-container{padding:0} header,footer{display:none}</style>",
     unsafe_allow_html=True,
 )
 
-# Estado para el último código detectado
-if "last_code" not in st.session_state:
-    st.session_state.last_code = ""
+# Usamos st.html (no iframe sandbox) para que getUserMedia funcione en móvil
+st.html(f"""
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <style>
+    :root {{ --bg:#0b0f1a; --card:#111827; --ink:#fff; --accent:#2563eb; --stroke:#374151; }}
+    body {{ margin:0; background:var(--bg); color:var(--ink); font-family: system-ui, Arial, sans-serif; }}
+    .wrap {{ max-width: 720px; margin: 0 auto; padding: 12px; }}
+    .card {{ background:var(--card); border-radius:16px; padding:14px; box-shadow:0 10px 30px rgba(0,0,0,.3); }}
+    video {{ width:100%; border-radius:12px; background:#000; }}
+    .row {{ display:flex; gap:8px; margin:10px 0; align-items:center; }}
+    .btn {{ padding:10px 14px; border-radius:10px; border:0; cursor:pointer; background:var(--accent); color:#fff; font-weight:600; }}
+    .btn:disabled {{ opacity:.6; cursor:not-allowed; }}
+    .input {{ flex:1; min-width:160px; padding:10px; border-radius:10px; border:1px solid var(--stroke); background:#0f172a; color:#fff; }}
+    a.btn {{ text-decoration:none; display:inline-block; }}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <div class="row">
+        <button class="btn" id="startBtn">Iniciar cámara</button>
+        <button class="btn" id="flipBtn">Cambiar</button>
+      </div>
+      <video id="preview" playsinline></video>
+      <div class="row">
+        <input id="sku" class="input" placeholder="SKU…" readonly />
+        <a class="btn" id="openLink" href="#" target="_blank" rel="noopener" aria-disabled="true">Abrir Form</a>
+      </div>
+    </div>
+  </div>
 
-class BarcodeProcessor(VideoProcessorBase):
-    def __init__(self) -> None:
-        self.last = ""
+  <!-- ZXing (lector de códigos) -->
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@latest"></script>
+  <script>
+    const FORM_URL = "{FORM_URL}";
+    const ENTRY_SKU = "{ENTRY_SKU}";
 
-    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
+    const codeReader = new ZXing.BrowserMultiFormatReader();
+    const videoEl = document.getElementById('preview');
+    const startBtn = document.getElementById('startBtn');
+    const flipBtn = document.getElementById('flipBtn');
+    const skuEl = document.getElementById('sku');
+    const openLink = document.getElementById('openLink');
 
-        # Decodificar con pyzbar (EAN-13, Code128, QR, etc.)
-        results = zbar_decode(img)
-        code_text = None
-        for obj in results:
-            code_text = obj.data.decode("utf-8").strip()
-            (x, y, w, h) = obj.rect
-            cv2.rectangle(img, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            # Mostrar texto
-            cv2.putText(img, code_text, (x, max(30, y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0,255,0), 2)
-            break  # con 1 basta
+    let devices = [];
+    let currentDeviceId = null;
 
-        if code_text:
-            self.last = code_text
-            st.session_state.last_code = code_text
+    function updateOpenLink(value) {{
+      if (!value) {{
+        openLink.setAttribute('href', '#');
+        openLink.setAttribute('aria-disabled', 'true');
+        return;
+      }}
+      const url = new URL(FORM_URL);
+      url.searchParams.set(ENTRY_SKU, value);
+      openLink.setAttribute('href', url.toString());
+      openLink.removeAttribute('aria-disabled');
+    }}
 
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+    async function listCameras() {{
+      const inputs = await ZXing.BrowserCodeReader.listVideoInputDevices();
+      if (!inputs.length) throw new Error("No hay cámaras disponibles");
+      devices = inputs;
+      if (!currentDeviceId) currentDeviceId = devices[devices.length - 1].deviceId; // cámara trasera si existe
+    }}
 
-col1, col2 = st.columns([3,2], vertical_alignment="center")
+    async function startScan() {{
+      try {{
+        await listCameras();
+        await codeReader.decodeFromVideoDevice(currentDeviceId, videoEl, (result, err) => {{
+          if (result) {{
+            const value = (result.getText() || '').trim();
+            if (value) {{
+              skuEl.value = value;       // captura automática
+              updateOpenLink(value);     // habilita botón al Form
+            }}
+          }}
+        }});
+      }} catch (e) {{
+        alert("No se pudo iniciar la cámara: " + e.message + "\\n(Usa https y permite la cámara en el navegador)");
+      }}
+    }}
 
-with col1:
-    webrtc_ctx = webrtc_streamer(
-        key="cam",
-        mode=WebRtcMode.SENDRECV,
-        video_processor_factory=BarcodeProcessor,
-        media_stream_constraints={"video": True, "audio": False},
-        async_processing=True,
-    )
+    startBtn.addEventListener('click', startScan);
 
-with col2:
-    sku = st.text_input("SKU", value=st.session_state.last_code, placeholder="—", label_visibility="hidden")
-    # Sincroniza cuando cambia el estado
-    if st.session_state.last_code and st.session_state.last_code != sku:
-        sku = st.session_state.last_code
+    flipBtn.addEventListener('click', async () => {{
+      try {{
+        if (!devices.length) await listCameras();
+        const idx = devices.findIndex(d => d.deviceId === currentDeviceId);
+        currentDeviceId = devices[(idx + 1) % devices.length].deviceId;
+        codeReader.reset();
+        startScan();
+      }} catch (e) {{
+        alert("No se pudo cambiar de cámara: " + e.message);
+      }}
+    }});
 
-    # Construye link al Form con el SKU
-    form_link = "#"
-    disabled = True
-    if sku:
-        import urllib.parse as up
-        url = up.urlparse(FORM_URL)
-        q = dict(up.parse_qsl(url.query))
-        q[ENTRY_SKU] = sku
-        new_q = up.urlencode(q)
-        form_link = up.urlunparse((url.scheme, url.netloc, url.path, url.params, new_q, url.fragment))
-        disabled = False
-
-    open_form = st.link_button("Abrir Form", url=form_link, disabled=disabled, use_container_width=True)
-
-# Botón para limpiar si escaneó algo extraño
-st.button("Limpiar", on_click=lambda: st.session_state.update(last_code=""))
+    // Limpia la cámara al salir
+    window.addEventListener('pagehide', () => codeReader.reset());
+  </script>
+</body>
+</html>
+""")
