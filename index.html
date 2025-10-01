@@ -23,18 +23,13 @@
     <div class="card">
       <div class="row">
         <button class="btn" id="startBtn">Iniciar cámara</button>
-        <!-- Botón Cambiar eliminado -->
       </div>
-      <div style="position:relative;">
-        <video id="preview" playsinline muted autoplay></video>
-        <canvas id="ocrBox" style="position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;"></canvas>
-      </div>
+      <video id="preview" playsinline muted autoplay></video>
       <div class="row">
         <input id="sku" class="input" placeholder="SKU detectado…" readonly />
         <button class="btn" id="photoBtn">Asociar fotos</button>
       </div>
       <div id="msg" class="msg"></div>
-      <div id="ocr" class="msg" style="min-height:2em;color:#aaf;margin-top:12px"></div>
     </div>
   </div>
 
@@ -43,9 +38,6 @@
 
   <!-- Sonido de lector de barra -->
   <audio id="beep" src="scanner-beep.mp3" preload="auto"></audio>
-
-  <!-- OCR: Tesseract.js -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.0.4/dist/tesseract.min.js"></script>
 
   <!-- Tu código, NO type=module, y después de la librería -->
   <script>
@@ -56,12 +48,10 @@
       }
       const videoEl  = document.getElementById('preview');
       const startBtn = document.getElementById('startBtn');
-      // const flipBtn  = document.getElementById('flipBtn'); // Eliminado
       const photoBtn = document.getElementById('photoBtn');
       const skuEl    = document.getElementById('sku');
       const msgEl    = document.getElementById('msg');
       const beep     = document.getElementById('beep');
-      const ocrBox = document.getElementById('ocrBox');
 
       // USAR ZXingBrowser (no ZXing)
       const reader = new ZXingBrowser.BrowserMultiFormatReader();
@@ -80,14 +70,9 @@
         startBtn.disabled = false;
       }
 
-      // Mejorar resolución para códigos pequeños (sin focusMode)
       async function warmUp(){
         const s = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1920 },
-            height: { ideal: 1080 }
-          },
+          video: { facingMode: { ideal: "environment" }, width:{ideal:1280}, height:{ideal:720} },
           audio: false
         });
         stream = s; videoEl.srcObject = s; await videoEl.play().catch(()=>{});
@@ -98,7 +83,6 @@
         devices = inputs || [];
         if(!devices.length) throw new Error("No hay cámaras disponibles");
         if(!currentId) currentId = devices[devices.length-1].deviceId;
-        // flipBtn.disabled = devices.length < 2; // Eliminado
       }
 
       async function decodeWithDevice(id){
@@ -117,54 +101,6 @@
         });
       }
 
-      // OCR en tiempo real
-      let ocrActive = true;
-      let ocrInterval = null;
-      const ocrDiv = document.getElementById('ocr');
-      const ocrCanvas = document.createElement('canvas');
-      async function runOCR(){
-        if(!ocrActive) return;
-        if(videoEl.readyState < 2) return;
-        ocrCanvas.width = videoEl.videoWidth;
-        ocrCanvas.height = videoEl.videoHeight;
-        ocrBox.width = videoEl.videoWidth;
-        ocrBox.height = videoEl.videoHeight;
-        const ctx = ocrCanvas.getContext('2d');
-        ctx.drawImage(videoEl, 0, 0, ocrCanvas.width, ocrCanvas.height);
-        const dataUrl = ocrCanvas.toDataURL('image/png');
-        Tesseract.recognize(dataUrl, 'spa', { logger:()=>{} })
-          .then(({ data }) => {
-            let text = (data.text||'').trim();
-            if(text.length>0) ocrDiv.textContent = 'OCR: ' + text;
-            else ocrDiv.textContent = '';
-            // Dibujar recuadros
-            const boxCtx = ocrBox.getContext('2d');
-            boxCtx.clearRect(0,0,ocrBox.width,ocrBox.height);
-            if(data.words && data.words.length) {
-              boxCtx.strokeStyle = '#00f6';
-              boxCtx.lineWidth = 3;
-              data.words.forEach(w => {
-                if(w.bbox && w.text && w.text.trim().length>0) {
-                  const { x0, y0, x1, y1 } = w.bbox;
-                  boxCtx.strokeRect(x0, y0, x1-x0, y1-y0);
-                }
-              });
-            }
-          })
-          .catch(()=>{ ocrDiv.textContent = ''; ocrBox.getContext('2d').clearRect(0,0,ocrBox.width,ocrBox.height); });
-      }
-      function startOCR(){
-        ocrActive = true;
-        if(ocrInterval) clearInterval(ocrInterval);
-        ocrInterval = setInterval(runOCR, 1800);
-      }
-      function stopOCR(){
-        ocrActive = false;
-        if(ocrInterval) clearInterval(ocrInterval);
-        ocrDiv.textContent = '';
-        if(ocrBox) ocrBox.getContext('2d').clearRect(0,0,ocrBox.width,ocrBox.height);
-      }
-
       async function start(){
         if(!(location.protocol === 'https:' || location.hostname === 'localhost')){
           log("Se requiere HTTPS para acceder a la cámara."); return;
@@ -180,7 +116,6 @@
           await stop(); // soltamos el warm-up
           await decodeWithDevice(currentId);
           log("Cámara activa. Apunta al código.");
-          startOCR();
         }catch(e){
           console.error(e);
           if(e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError')){
@@ -204,17 +139,13 @@
         }
         start();
       });
-      // flipBtn eliminado
       photoBtn.addEventListener('click', ()=>{
         log('Función de asociar fotos aún no implementada.');
       });
-      // copyBtn eliminado
 
-      // Autoarranque si ya diste permiso una vez
-      // start().catch(()=>{ /* quedará el botón */ }); // Desactivado para evitar doble inicio
-      window.addEventListener('pagehide', ()=>{ stop(); stopOCR(); });
-      document.addEventListener('visibilitychange', ()=>{ if(document.hidden){ stop(); stopOCR(); } });
-      window.addEventListener('beforeunload', ()=>{ stop(); stopOCR(); });
+      window.addEventListener('pagehide', stop);
+      document.addEventListener('visibilitychange', ()=>{ if(document.hidden) stop(); });
+      window.addEventListener('beforeunload', stop);
     });
   </script>
 </body>
