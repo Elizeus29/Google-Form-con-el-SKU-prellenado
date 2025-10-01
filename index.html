@@ -80,14 +80,13 @@
         startBtn.disabled = false;
       }
 
-      // Mejorar resolución y enfoque para códigos pequeños
+      // Mejorar resolución para códigos pequeños (sin focusMode)
       async function warmUp(){
         const s = await navigator.mediaDevices.getUserMedia({
           video: {
             facingMode: { ideal: "environment" },
             width: { ideal: 1920 },
-            height: { ideal: 1080 },
-            focusMode: "continuous"
+            height: { ideal: 1080 }
           },
           audio: false
         });
