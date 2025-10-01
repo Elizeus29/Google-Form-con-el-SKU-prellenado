@@ -55,21 +55,20 @@
   <!-- QRCode para escritorio -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
-  <!-- ===== Form oculto para evitar CORS (target a iframe) ===== -->
+  <!-- ===== Form oculto (target a iframe) para evitar CORS y sin ventanas nuevas ===== -->
   <form id="gsForm"
         action="https://script.google.com/macros/s/AKfycbyCi-LjCMfE6aSch_1RMA4KI7g8KRrP_4RKfmx_1ihPCeiWhJ49Jn3F1dTCagSPVQGl9w/exec"
         method="POST" enctype="multipart/form-data"
-        target="_blank" style="display:none">
+        target="gsFrame" style="display:none">
     <input type="hidden" name="sku" id="gsSku">
     <input type="file"   name="file" id="gsFile" accept="image/*" capture="environment" multiple>
   </form>
-  <iframe name="gsFrame" style="display:none"></iframe>
-  <!-- ========================================================= -->
+  <iframe name="gsFrame" id="gsFrame" style="display:none"></iframe>
+  <!-- ============================================================================== -->
 
   <script>
     // Si cambiaste el deployment, actualiza también el action del form:
     const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyCi-LjCMfE6aSch_1RMA4KI7g8KRrP_4RKfmx_1ihPCeiWhJ49Jn3F1dTCagSPVQGl9w/exec';
-    // Sync del form con la constante (opcional)
     document.getElementById('gsForm').setAttribute('action', WEBAPP_URL);
 
     function isDesktopUA(){
@@ -80,25 +79,42 @@
       el.textContent = msg || '';
     }
 
-    // Carga de archivos vía FORM (evita CORS)
+    // Escucha el resultado desde el iframe (Apps Script envía postMessage)
+    window.addEventListener('message', (ev) => {
+      try {
+        const data = ev.data || {};
+        if (data && data.type === 'gs-upload') {
+          const msgEl = document.getElementById('msg');
+          if (data.ok) {
+            const list = (data.files || []).map((f, i) => `✔️ Foto ${i+1}: ${f.viewUrl}`).join('\n');
+            msgEl.className = 'msg ok';
+            msgEl.textContent = `Listo. Carpeta: ${(data.files && data.files[0] && data.files[0].folderUrl) || ''}\n${list}`;
+          } else {
+            msgEl.className = 'msg err';
+            msgEl.textContent = 'Error: ' + (data.error || 'falló la subida');
+          }
+        }
+      } catch (_) {}
+    });
+
+    // Carga de archivos vía FORM (evita CORS y ventanas nuevas)
     function uploadViaForm(sku, msgEl){
       const form = document.getElementById('gsForm');
       const skuHidden = document.getElementById('gsSku');
       const fileInput = document.getElementById('gsFile');
       if (!form || !skuHidden || !fileInput) { msgEl.textContent='Formulario oculto no encontrado.'; return; }
       if (!sku) { msgEl.textContent='Falta SKU.'; return; }
-    
+
       skuHidden.value = sku;
       fileInput.value = '';
       fileInput.onchange = () => {
         if (!fileInput.files.length) { msgEl.textContent='No se seleccionó imagen.'; return; }
+        msgEl.className = 'msg warn';
         msgEl.textContent = 'Subiendo…';
-        form.submit();                         // <--- AQUÍ se envía el form
-        msgEl.textContent = 'Enviado. Se guardará en la carpeta del SKU.';
+        form.submit(); // envía al iframe; el resultado llegará por postMessage
       };
-      fileInput.click();                       // abre cámara en móvil
+      fileInput.click(); // abre cámara en móvil
     }
-
 
     window.addEventListener('DOMContentLoaded', () => {
       if (typeof ZXingBrowser === 'undefined') {
@@ -160,7 +176,7 @@
               log(msgEl, 'Detectado: ' + v, 'ok');
 
               if (!isDesktopUA()){
-                // MÓVIL: pedir fotos y subir con form (sin CORS)
+                // MÓVIL: pedir fotos y subir con form (sin CORS / sin ventanas)
                 uploadViaForm(v, msgEl);
               } else {
                 // ESCRITORIO: muestro QR y dejo botón de subir
@@ -265,4 +281,3 @@
   </script>
 </body>
 </html>
-
