@@ -37,7 +37,7 @@
   </div>
 
   <!-- ZXing (lector de códigos) -->
-  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@latest"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@latest/dist/index.umd.min.js"></script>
   <script>
     // === Configura qué hacer con el código detectado ===
     async function onCode(value) {
@@ -47,7 +47,7 @@
     }
     // ================================================
 
-    const codeReader = new ZXing.BrowserMultiFormatReader();
+    const codeReader = new ZXingBrowser.BrowserMultiFormatReader();
     const videoEl = document.getElementById('preview');
     const startBtn = document.getElementById('startBtn');
     const flipBtn  = document.getElementById('flipBtn');
@@ -92,7 +92,7 @@
     }
 
     async function listCameras() {
-      const inputs = await ZXing.BrowserCodeReader.listVideoInputDevices();
+      const inputs = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
       devices = inputs || [];
       if (!devices.length) throw new Error("No hay cámaras disponibles");
       // preferir trasera (suele ser la última en Android; en desktop no importa)
@@ -240,3 +240,4 @@
   </script>
 </body>
 </html>
+
