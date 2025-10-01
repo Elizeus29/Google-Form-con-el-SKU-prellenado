@@ -55,102 +55,49 @@
   <!-- QRCode para escritorio -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
-  <script>
-    // ======= CONFIGURA TU WEB APP =======
-    const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyCi-LjCMfE6aSch_1RMA4KI7g8KRrP_4RKfmx_1ihPCeiWhJ49Jn3F1dTCagSPVQGl9w/exec'; // <-- pega aquí tu /exec
-    // ====================================
+  <!-- ===== Form oculto para evitar CORS (target a iframe) ===== -->
+  <form id="gsForm"
+        action="https://script.google.com/macros/s/AKfycbyCi-LjCMfE6aSch_1RMA4KI7g8KRrP_4RKfmx_1ihPCeiWhJ49Jn3F1dTCagSPVQGl9w/exec"
+        method="POST" enctype="multipart/form-data" target="gsFrame" style="display:none">
+    <input type="hidden" name="sku" id="gsSku">
+    <input type="file" name="file" id="gsFile" accept="image/*" capture="environment" multiple>
+  </form>
+  <iframe name="gsFrame" style="display:none"></iframe>
+  <!-- ========================================================= -->
 
-    // input de archivos oculto (web & móvil)
-    const hiddenInput = document.createElement('input');
-    hiddenInput.type = 'file';
-    hiddenInput.accept = 'image/*';
-    // en móvil abre cámara trasera:
-    hiddenInput.setAttribute('capture', 'environment');
-    hiddenInput.multiple = true;
-    hiddenInput.style.display = 'none';
-    document.body.appendChild(hiddenInput);
+  <script>
+    // Si cambiaste el deployment, actualiza también el action del form:
+    const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyCi-LjCMfE6aSch_1RMA4KI7g8KRrP_4RKfmx_1ihPCeiWhJ49Jn3F1dTCagSPVQGl9w/exec';
+    // Sync del form con la constante (opcional)
+    document.getElementById('gsForm').setAttribute('action', WEBAPP_URL);
 
     function isDesktopUA(){
       return !/android|iphone|ipad|ipod|mobile|windows phone/i.test(navigator.userAgent);
     }
-
     function log(el, msg, cls){
       if (cls) el.className = 'msg ' + cls;
       el.textContent = msg || '';
     }
 
-    async function compressImage(file, maxDim=1600, quality=0.82) {
-      if (!/^image\//.test(file.type)) return file;
-      const img = new Image();
-      img.src = URL.createObjectURL(file);
-      await new Promise(res => img.onload = res);
+    // Carga de archivos vía FORM (evita CORS)
+    function uploadViaForm(sku, msgEl){
+      const form = document.getElementById('gsForm');
+      const skuHidden = document.getElementById('gsSku');
+      const fileInput = document.getElementById('gsFile');
+      if (!form || !skuHidden || !fileInput) { log(msgEl, 'Error interno: formulario oculto no encontrado.', 'err'); return; }
+      if (!sku) { log(msgEl, 'Falta SKU.', 'warn'); return; }
 
-      let { width, height } = img;
-      const scale = Math.min(1, maxDim / Math.max(width, height));
-      const canvas = document.createElement('canvas');
-      canvas.width = Math.round(width * scale);
-      canvas.height = Math.round(height * scale);
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
-      return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' });
+      // Rellena SKU y pide archivos (esto abre cámara en móvil)
+      skuHidden.value = sku;
+      fileInput.value = ''; // reset
+      fileInput.onchange = () => {
+        if (!fileInput.files.length) { log(msgEl, 'No se seleccionó ninguna imagen.', 'warn'); return; }
+        log(msgEl, 'Subiendo…', '');
+        form.submit();        // Envío al iframe oculto (sin CORS)
+        log(msgEl, 'Enviado. Las fotos se guardarán en la carpeta del SKU.', 'ok');
+      };
+      fileInput.click();
     }
-
-    async function uploadFiles({ sku, files, msgEl, after }) {
-      if (!sku || !files || !files.length) { log(msgEl, 'Falta SKU o archivo.', 'warn'); return; }
-
-      const fd = new FormData();
-      fd.append('sku', sku);
-      for (const f0 of files) {
-        const f = await compressImage(f0); // opcional
-        fd.append('file', f);
-      }
-
-      log(msgEl, 'Subiendo…', '');
-
-      try {
-        const r = await fetch(WEBAPP_URL, {
-          method: 'POST',
-          body: fd,
-          // MUY IMPORTANTE para evitar enviar cookies y provocar redirects raros:
-          credentials: 'omit',
-          redirect: 'follow', // si el server redirige a login, aquí no tendremos CORS ok, pero al menos lo sabremos
-        });
-
-        const text = await r.text(); // lee texto crudo por si el server devolvió HTML de login
-        // Intenta parsear JSON
-        let data = null;
-        try { data = JSON.parse(text); } catch (e) { /* no JSON */ }
-
-        if (!r.ok) {
-          // 302/401/403 suelen indicar permisos malos o login requerido
-          log(msgEl, `HTTP ${r.status}. Verifica permisos del deployment y que uses la URL /exec.\nRespuesta:\n${text.slice(0,500)}`, 'err');
-          return;
-        }
-
-        // Si vino HTML (p.ej. página de login), detecta
-        if (!data || typeof data !== 'object') {
-          if (/accounts\.google\.com/i.test(text) || /<html/i.test(text)) {
-            log(msgEl, 'Parece que la Web App pide login. En Apps Script cambia "Who has access" a "Anyone" y vuelve a desplegar.', 'err');
-          } else {
-            log(msgEl, 'Respuesta no-JSON del servidor:\n' + text.slice(0,500), 'err');
-          }
-          return;
-        }
-
-        if (data.ok) {
-          const list = data.files?.map((f,i)=>`✔️ Foto ${i+1}: ${f.viewUrl}`).join('\n') || '';
-          log(msgEl, `Listo. Carpeta: ${data.files?.[0]?.folderUrl || ''}\n${list}`, 'ok');
-          if (after) after(data);
-        } else {
-          log(msgEl, 'Error servidor: ' + (data.error || 'falló la subida'), 'err');
-        }
-      } catch (e) {
-        log(msgEl, 'Error de red: ' + e.message, 'err');
-      }
-    }
-
 
     window.addEventListener('DOMContentLoaded', () => {
       if (typeof ZXingBrowser === 'undefined') {
@@ -212,43 +159,15 @@
               log(msgEl, 'Detectado: ' + v, 'ok');
 
               if (!isDesktopUA()){
-                // MÓVIL: abrir selección de foto(s) y subir directo
-                hiddenInput.value = ''; // reset
-                hiddenInput.onchange = () => {
-                  const files = hiddenInput.files;
-                  uploadFiles({
-                    sku: v,
-                    files,
-                    msgEl,
-                    after: () => { /* opcional: navegar, limpiar, etc. */ }
-                  });
-                };
-                hiddenInput.click();
+                // MÓVIL: pedir fotos y subir con form (sin CORS)
+                uploadViaForm(v, msgEl);
               } else {
-                // ESCRITORIO: preparo QR y dejo botón de subir
+                // ESCRITORIO: muestro QR y dejo botón de subir
                 showQRForDesktop(v);
               }
             }
           }
         });
-      }
-
-      async function compressImage(file, maxDim=1600, quality=0.82) {
-        if (!/^image\//.test(file.type)) return file;
-        const img = new Image();
-        img.src = URL.createObjectURL(file);
-        await new Promise(res => img.onload = res);
-
-        let { width, height } = img;
-        const scale = Math.min(1, maxDim / Math.max(width, height));
-        const canvas = document.createElement('canvas');
-        canvas.width = Math.round(width * scale);
-        canvas.height = Math.round(height * scale);
-        const ctx = canvas.getContext('2d');
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-
-        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
-        return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' });
       }
 
       async function start(){
@@ -271,7 +190,7 @@
         }
       }
 
-      // --- UI existente: limpiar ---
+      // Limpiar
       clearBtn.addEventListener('click', ()=>{
         skuEl.value = '';
         const qrDiv = document.getElementById('qr');
@@ -281,7 +200,7 @@
         skuEl.focus();
       });
 
-      // --- Escritorio vs Móvil ---
+      // Escritorio vs Móvil
       const isDesktop = isDesktopUA();
       if (isDesktop){
         const desktopTitle = document.getElementById('desktopTitle'); if(desktopTitle) desktopTitle.style.display = '';
@@ -300,7 +219,6 @@
           qrDiv.innerHTML = '';
           if (val && val.length>0){
             qrDiv.style.display = 'flex';
-            const url = location.href.split('#')[0];
             new QRCode(qrDiv, { text: val, width: 240, height: 240, colorDark: '#222', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
             if (qrLabel){
               qrLabel.textContent = 'Código leído: escanea/usa este SKU para subir fotos.';
@@ -322,26 +240,21 @@
         skuEl.placeholder = 'SKU detectado…';
         const photoRow = document.getElementById('photoRow'); if(photoRow) photoRow.style.display = 'none';
         const qrLabel = document.getElementById('qrLabel'); if(qrLabel) qrLabel.style.display = 'none';
-        // Intento auto-arranque
-        (async ()=>{ try{ await start(); }catch(e){ /* gesto requerido */ cameraRow && (cameraRow.style.display=''); } })();
+        (async ()=>{ try{ await start(); }catch(e){ cameraRow && (cameraRow.style.display=''); } })();
       }
 
-      // --- Botones ---
+      // Botones
       startBtn.addEventListener('click', async () => {
         if (!audioUnlocked) { try { await beep.play(); beep.pause(); beep.currentTime = 0; audioUnlocked = true; } catch {} }
         const cameraRow = document.getElementById('cameraRow'); if (cameraRow) cameraRow.style.display = 'none';
         start();
       });
 
-      // “Asociar fotos” (desktop y también móvil si lo muestras)
+      // “Asociar fotos”
       photoBtn.addEventListener('click', ()=>{
         const sku = skuEl.value.trim();
         if (!sku){ log(msgEl, 'Primero escanea o ingresa un SKU.', 'warn'); return; }
-        hiddenInput.value = '';
-        hiddenInput.onchange = () => {
-          uploadFiles({ sku, files: hiddenInput.files, msgEl });
-        };
-        hiddenInput.click();
+        uploadViaForm(sku, msgEl);
       });
 
       window.addEventListener('pagehide', stop);
