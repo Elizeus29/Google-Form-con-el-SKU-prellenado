@@ -21,14 +21,17 @@
 <body>
   <div class="wrap">
     <div class="card">
+      <div id="desktopTitle" style="display:none;text-align:center;font-size:1.2rem;font-weight:600;margin-bottom:12px;opacity:.92;">Escanea el código de barra del producto.</div>
       <div class="row" id="cameraRow">
         <button class="btn" id="startBtn">Iniciar cámara</button>
       </div>
       <video id="preview" playsinline muted autoplay></video>
       <div class="row">
         <input id="sku" class="input" placeholder="SKU detectado…" readonly />
+        <button class="btn" id="clearBtn" type="button">Limpiar Código</button>
       </div>
       <div id="qr" style="display:none;justify-content:center;margin:16px 0;"></div>
+      <div id="qrLabel" style="display:none;"></div>
       <div class="row" id="photoRow">
         <button class="btn" id="photoBtn">Asociar fotos</button>
       </div>
@@ -56,7 +59,16 @@
       const startBtn = document.getElementById('startBtn');
       const photoBtn = document.getElementById('photoBtn');
       const skuEl    = document.getElementById('sku');
-      const msgEl    = document.getElementById('msg');
+  const msgEl    = document.getElementById('msg');
+  const clearBtn = document.getElementById('clearBtn');
+      // Limpiar el input SKU y el QR al pulsar el botón
+      clearBtn.addEventListener('click', ()=>{
+        skuEl.value = '';
+        // Forzar evento input para limpiar QR y label
+        const event = new Event('input', { bubbles: true });
+        skuEl.dispatchEvent(event);
+        skuEl.focus();
+      });
       const beep     = document.getElementById('beep');
 
       // USAR ZXingBrowser (no ZXing)
@@ -112,6 +124,10 @@
                 }else{
                   qrDiv.style.display = 'none';
                 }
+              }else{
+                // En móvil, redirigir automáticamente al Google Form con el SKU
+                const formUrl = 'https://docs.google.com/forms/d/e/1FAIpQLScua9KznddTAn4XUVzRsLc4zmzeDzVg7gkhNLbklKp4yOQYBg/viewform?usp=pp_url&entry.5441271=' + encodeURIComponent(v);
+                window.location.href = formUrl;
               }
             }
           }
@@ -144,9 +160,12 @@
         }
       }
 
-      // Detectar si es escritorio
+  // Detectar si es escritorio
       const isDesktop = !/android|iphone|ipad|ipod|mobile|windows phone/i.test(navigator.userAgent);
       if(isDesktop){
+        // Mostrar título superior en escritorio
+        const desktopTitle = document.getElementById('desktopTitle');
+        if(desktopTitle) desktopTitle.style.display = '';
         // Oculta el botón de cámara y el video solo en escritorio
         const cameraRow = document.getElementById('cameraRow');
         if(cameraRow) cameraRow.style.display = 'none';
@@ -158,20 +177,51 @@
         let qr = null;
         function showQR(val){
           qrDiv.innerHTML = '';
+          let qrLabel = document.getElementById('qrLabel');
+          if(qrLabel){
+            qrLabel.textContent = 'Escanea el QR para cargar las fotos.';
+            qrLabel.style.textAlign = 'center';
+            qrLabel.style.margin = '8px 0 0 0';
+            qrLabel.style.opacity = '0.85';
+          }
           if(val && val.length>0){
             qrDiv.style.display = 'flex';
-            qr = new QRCode(qrDiv, { text: val, width: 160, height: 160, colorDark: '#222', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
+            // El QR contendrá la URL del Google Form con el SKU prellenado
+            const formUrl = 'https://docs.google.com/forms/d/e/1FAIpQLScua9KznddTAn4XUVzRsLc4zmzeDzVg7gkhNLbklKp4yOQYBg/viewform?usp=pp_url&entry.5441271=' + encodeURIComponent(val);
+            qr = new QRCode(qrDiv, { text: formUrl, width: 240, height: 240, colorDark: '#222', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
+            // Hacer clic en el QR abre el Google Form con el SKU
+            qrDiv.style.cursor = 'pointer';
+            qrDiv.onclick = ()=>{
+              window.open(formUrl, '_blank');
+            };
+            // Mostrar el label
+            if(qrLabel) qrLabel.style.display = '';
           }else{
             qrDiv.style.display = 'none';
+            qrDiv.style.cursor = '';
+            qrDiv.onclick = null;
+            // Ocultar el label si existe
+            if(qrLabel) qrLabel.style.display = 'none';
           }
         }
         skuEl.addEventListener('input', e=>{
           showQR(skuEl.value.trim());
         });
-        // Mover el botón de asociar fotos debajo del QR
+        // En escritorio, ocultar el botón y mostrar label
         const photoRow = document.getElementById('photoRow');
-        if(photoRow && qrDiv){
-          qrDiv.parentNode.insertBefore(photoRow, qrDiv.nextSibling);
+        if(photoRow) photoRow.style.display = 'none';
+        // Crear label si no existe
+        let qrLabel = document.getElementById('qrLabel');
+        if(!qrLabel){
+          qrLabel = document.createElement('div');
+          qrLabel.id = 'qrLabel';
+          qrLabel.textContent = 'Escanea el QR para cargar las fotos.';
+          qrLabel.style.textAlign = 'center';
+          qrLabel.style.margin = '8px 0 0 0';
+          qrLabel.style.opacity = '0.85';
+          qrDiv.parentNode.insertBefore(qrLabel, qrDiv.nextSibling);
+        }else{
+          qrLabel.style.display = '';
         }
       }else{
         // En móvil, asegurarse que el video y el botón de cámara estén visibles
@@ -180,6 +230,11 @@
         if(videoEl) videoEl.style.display = '';
         skuEl.setAttribute('readonly', 'readonly');
         skuEl.placeholder = 'SKU detectado…';
+        // Mostrar el botón de asociar fotos y ocultar el label
+        const photoRow = document.getElementById('photoRow');
+        if(photoRow) photoRow.style.display = '';
+        const qrLabel = document.getElementById('qrLabel');
+        if(qrLabel) qrLabel.style.display = 'none';
       }
 
       startBtn.addEventListener('click', async () => {
@@ -195,7 +250,14 @@
         start();
       });
       photoBtn.addEventListener('click', ()=>{
-        log('Función de asociar fotos aún no implementada.');
+        const sku = skuEl.value.trim();
+        if(!sku){
+          log('Primero escanea o ingresa un SKU.');
+          return;
+        }
+        // Abre Google Forms con el SKU prellenado
+        const formUrl = 'https://docs.google.com/forms/d/e/1FAIpQLScua9KznddTAn4XUVzRsLc4zmzeDzVg7gkhNLbklKp4yOQYBg/viewform?usp=pp_url&entry.5441271=' + encodeURIComponent(sku);
+        window.open(formUrl, '_blank');
       });
 
       window.addEventListener('pagehide', stop);
