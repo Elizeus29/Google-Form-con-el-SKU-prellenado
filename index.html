@@ -162,7 +162,7 @@
 
   // Detectar si es escritorio
       const isDesktop = !/android|iphone|ipad|ipod|mobile|windows phone/i.test(navigator.userAgent);
-      if(isDesktop){
+  if(isDesktop){
         // Mostrar título superior en escritorio
         const desktopTitle = document.getElementById('desktopTitle');
         if(desktopTitle) desktopTitle.style.display = '';
@@ -226,9 +226,15 @@
           qrLabel.style.display = '';
         }
       }else{
-        // En móvil, asegurarse que el video y el botón de cámara estén visibles
+        // En móvil, intentar abrir la cámara automáticamente
         const cameraRow = document.getElementById('cameraRow');
-        if(cameraRow) cameraRow.style.display = '';
+        if(cameraRow) {
+          cameraRow.style.display = 'none';
+          cameraRow.style.position = 'fixed';
+          cameraRow.style.bottom = '18px';
+          cameraRow.style.right = '18px';
+          cameraRow.style.zIndex = '1000';
+        }
         if(videoEl) videoEl.style.display = '';
         skuEl.setAttribute('readonly', 'readonly');
         skuEl.placeholder = 'SKU detectado…';
@@ -240,6 +246,16 @@
         // Ocultar el label
         const qrLabel = document.getElementById('qrLabel');
         if(qrLabel) qrLabel.style.display = 'none';
+
+        // Intentar abrir la cámara automáticamente
+        (async () => {
+          try {
+            await start();
+          } catch (e) {
+            // Si falla, mostrar el botón de iniciar cámara
+            if(cameraRow) cameraRow.style.display = '';
+          }
+        })();
       }
 
       startBtn.addEventListener('click', async () => {
@@ -252,6 +268,9 @@
             audioUnlocked = true;
           } catch {}
         }
+        // Ocultar el botón al iniciar
+        const cameraRow = document.getElementById('cameraRow');
+        if(cameraRow) cameraRow.style.display = 'none';
         start();
       });
       photoBtn.addEventListener('click', ()=>{
