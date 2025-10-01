@@ -23,12 +23,12 @@
     <div class="card">
       <div class="row">
         <button class="btn" id="startBtn">Iniciar cámara</button>
-        <button class="btn" id="flipBtn" disabled>Cambiar</button>
+        <!-- Botón Cambiar eliminado -->
       </div>
       <video id="preview" playsinline muted autoplay></video>
       <div class="row">
         <input id="sku" class="input" placeholder="SKU detectado…" readonly />
-        <button class="btn" id="copyBtn">Copiar</button>
+        <button class="btn" id="photoBtn">Asociar fotos</button>
       </div>
       <div id="msg" class="msg"></div>
     </div>
@@ -36,6 +36,9 @@
 
   <!-- CARGA CORRECTA: @zxing/browser UMD (global = ZXingBrowser) -->
   <script src="https://unpkg.com/@zxing/browser@0.1.5"></script>
+
+  <!-- Sonido de lector de barra -->
+  <audio id="beep" src="https://cdn.jsdelivr.net/gh/eliseoconcha/ai-book-assets@main/beep-barcode.mp3" preload="auto"></audio>
 
   <!-- Tu código, NO type=module, y después de la librería -->
   <script>
@@ -46,10 +49,11 @@
       }
       const videoEl  = document.getElementById('preview');
       const startBtn = document.getElementById('startBtn');
-      const flipBtn  = document.getElementById('flipBtn');
-      const copyBtn  = document.getElementById('copyBtn');
+      // const flipBtn  = document.getElementById('flipBtn'); // Eliminado
+      const photoBtn = document.getElementById('photoBtn');
       const skuEl    = document.getElementById('sku');
       const msgEl    = document.getElementById('msg');
+      const beep     = document.getElementById('beep');
 
       // USAR ZXingBrowser (no ZXing)
       const reader = new ZXingBrowser.BrowserMultiFormatReader();
@@ -80,14 +84,17 @@
         devices = inputs || [];
         if(!devices.length) throw new Error("No hay cámaras disponibles");
         if(!currentId) currentId = devices[devices.length-1].deviceId;
-        flipBtn.disabled = devices.length < 2;
+        // flipBtn.disabled = devices.length < 2; // Eliminado
       }
 
       async function decodeWithDevice(id){
         await reader.decodeFromVideoDevice(id, videoEl, (result, err) => {
           if(result){
             const v = (result.getText()||"").trim();
-            if(v){ skuEl.value = v; log("Detectado: " + v); }
+            if(v){
+              skuEl.value = v; log("Detectado: " + v);
+              if(beep) { beep.currentTime = 0; beep.play().catch(()=>{}); }
+            }
           }
         });
       }
@@ -119,20 +126,11 @@
       }
 
       startBtn.addEventListener('click', start);
-      flipBtn.addEventListener('click', async ()=>{
-        try{
-          await list();
-          const i = devices.findIndex(d=>d.deviceId===currentId);
-          currentId = devices[(i+1)%devices.length].deviceId;
-          await stop();
-          await decodeWithDevice(currentId);
-          log("Cámara cambiada.");
-        }catch(e){ log("No se pudo cambiar de cámara."); }
+      // flipBtn eliminado
+      photoBtn.addEventListener('click', ()=>{
+        log('Función de asociar fotos aún no implementada.');
       });
-      copyBtn.addEventListener('click', async ()=>{
-        if(!skuEl.value) return;
-        try{ await navigator.clipboard.writeText(skuEl.value); log("SKU copiado."); }catch{ log("No se pudo copiar."); }
-      });
+      // copyBtn eliminado
 
       // Autoarranque si ya diste permiso una vez
       start().catch(()=>{ /* quedará el botón */ });
