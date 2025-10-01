@@ -51,6 +51,7 @@
   <!-- Tu código, NO type=module, y después de la librería -->
   <script>
     window.addEventListener('DOMContentLoaded', () => {
+      // (Revertido) Mostrar botones en móvil como antes
       if (typeof ZXingBrowser === 'undefined') {
         document.getElementById('msg').textContent = 'Error: ZXingBrowser no está disponible. Verifica la conexión a internet o la carga de la librería.';
         return;
@@ -70,13 +71,7 @@
         skuEl.focus();
       });
 
-      // Si es móvil, ocultar el botón y abrir la cámara automáticamente
-      if (!isDesktop) {
-        const cameraRow = document.getElementById('cameraRow');
-        if (cameraRow) cameraRow.style.display = 'none';
-        // Iniciar cámara automáticamente
-        setTimeout(() => { start(); }, 300);
-      }
+      // (Revertido) En móvil, la cámara se inicia solo al presionar el botón
       const beep     = document.getElementById('beep');
 
       // USAR ZXingBrowser (no ZXing)
