@@ -2,25 +2,352 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Prueba de subida</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>Escáner SKU</title>
+  <link rel="icon" href="data:;base64,iVBORw0KGgo=" />
+  <style>
+    :root { --bg:#0b0f1a; --card:#111827; --ink:#fff; --accent:#2563eb; --stroke:#374151; }
+    body { margin:0; background:var(--bg); color:var(--ink); font-family: system-ui, Arial, sans-serif; }
+    .wrap { max-width:720px; margin:0 auto; padding:10px; }
+    .card { background:var(--card); border-radius:16px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.3); }
+    video { width:100%; border-radius:12px; background:#000; width:100%; height:auto; }
+    .row { display:flex; gap:8px; margin:10px 0; align-items:center; flex-wrap:wrap; }
+    .btn { padding:10px 14px; border-radius:10px; border:0; cursor:pointer; background:var(--accent); color:#fff; font-weight:600; }
+    .input { flex:1; min-width:160px; padding:10px; border-radius:10px; border:1px solid var(--stroke); background:#0f172a; color:#fff; }
+    .msg { margin-top:8px; font-size:.95rem; opacity:.9; white-space:pre-wrap }
+    .pill { display:inline-block; padding:4px 8px; border-radius:999px; background:#0f172a; border:1px solid var(--stroke); font-size:.8rem; opacity:.9 }
+    .ok { color:#22c55e } .warn{ color:#f59e0b } .err{ color:#ef4444 }
+  </style>
 </head>
 <body>
-  <h2>Subir foto al Google Apps Script</h2>
+  <div class="wrap">
+    <div class="card">
+      <div id="desktopTitle" style="display:none;text-align:center;font-size:1.2rem;font-weight:600;margin-bottom:12px;opacity:.92;">Escanea el código de barra del producto.</div>
 
-  <form id="gsForm"
-        action="https://script.google.com/macros/s/AKfycbxxxxxxx/exec"
-        method="POST"
-        enctype="multipart/form-data"
-        target="gsFrame">
-    <label>SKU:
-      <input type="text" name="sku" value="7800007386526">
-    </label>
-    <br><br>
-    <input type="file" name="file" accept="image/*" capture="environment" multiple>
-    <br><br>
-    <button type="submit">Subir archivo</button>
-  </form>
+      <div class="row" id="cameraRow">
+        <button class="btn" id="startBtn">Iniciar cámara</button>
+        <span class="pill" id="permState" style="display:none"></span>
+      </div>
 
-  <iframe name="gsFrame" style="width:100%;height:200px;border:1px solid #ccc;"></iframe>
+      <video id="preview" playsinline muted autoplay></video>
+
+      <div class="row">
+        <input id="sku" class="input" placeholder="SKU detectado…" readonly />
+        <button class="btn" id="clearBtn" type="button">Limpiar Código</button>
+      </div>
+
+      <div id="qr" style="display:none;justify-content:center;margin:16px 0;"></div>
+      <div id="qrLabel" style="display:none;"></div>
+
+      <div class="row" id="photoRow">
+        <button class="btn" id="photoBtn" type="button">Asociar fotos</button>
+        <span id="uploadHint" class="small" style="opacity:.8"></span>
+      </div>
+
+      <div id="msg" class="msg"></div>
+    </div>
+  </div>
+
+  <!-- ZXing navegador (global: ZXingBrowser) -->
+  <script src="https://unpkg.com/@zxing/browser@0.1.5"></script>
+  <!-- Sonido -->
+  <audio id="beep" src="scanner-beep.mp3" preload="auto"></audio>
+  <!-- QRCode para escritorio -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+  <script>
+    // ======= CONFIGURA TU WEB APP =======
+    const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyCi-LjCMfE6aSch_1RMA4KI7g8KRrP_4RKfmx_1ihPCeiWhJ49Jn3F1dTCagSPVQGl9w/exec'; // <-- pega aquí tu /exec
+    // ====================================
+
+    // input de archivos oculto (web & móvil)
+    const hiddenInput = document.createElement('input');
+    hiddenInput.type = 'file';
+    hiddenInput.accept = 'image/*';
+    // en móvil abre cámara trasera:
+    hiddenInput.setAttribute('capture', 'environment');
+    hiddenInput.multiple = true;
+    hiddenInput.style.display = 'none';
+    document.body.appendChild(hiddenInput);
+
+    function isDesktopUA(){
+      return !/android|iphone|ipad|ipod|mobile|windows phone/i.test(navigator.userAgent);
+    }
+
+    function log(el, msg, cls){
+      if (cls) el.className = 'msg ' + cls;
+      el.textContent = msg || '';
+    }
+
+    async function compressImage(file, maxDim=1600, quality=0.82) {
+      if (!/^image\//.test(file.type)) return file;
+      const img = new Image();
+      img.src = URL.createObjectURL(file);
+      await new Promise(res => img.onload = res);
+
+      let { width, height } = img;
+      const scale = Math.min(1, maxDim / Math.max(width, height));
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(width * scale);
+      canvas.height = Math.round(height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+      return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' });
+    }
+
+    async function uploadFiles({ sku, files, msgEl, after }) {
+      if (!sku || !files || !files.length) { log(msgEl, 'Falta SKU o archivo.', 'warn'); return; }
+
+      const fd = new FormData();
+      fd.append('sku', sku);
+      for (const f0 of files) {
+        const f = await compressImage(f0); // opcional
+        fd.append('file', f);
+      }
+
+      log(msgEl, 'Subiendo…', '');
+
+      try {
+        const r = await fetch(WEBAPP_URL, {
+          method: 'POST',
+          body: fd,
+          // MUY IMPORTANTE para evitar enviar cookies y provocar redirects raros:
+          credentials: 'omit',
+          redirect: 'follow', // si el server redirige a login, aquí no tendremos CORS ok, pero al menos lo sabremos
+        });
+
+        const text = await r.text(); // lee texto crudo por si el server devolvió HTML de login
+        // Intenta parsear JSON
+        let data = null;
+        try { data = JSON.parse(text); } catch (e) { /* no JSON */ }
+
+        if (!r.ok) {
+          // 302/401/403 suelen indicar permisos malos o login requerido
+          log(msgEl, `HTTP ${r.status}. Verifica permisos del deployment y que uses la URL /exec.\nRespuesta:\n${text.slice(0,500)}`, 'err');
+          return;
+        }
+
+        // Si vino HTML (p.ej. página de login), detecta
+        if (!data || typeof data !== 'object') {
+          if (/accounts\.google\.com/i.test(text) || /<html/i.test(text)) {
+            log(msgEl, 'Parece que la Web App pide login. En Apps Script cambia "Who has access" a "Anyone" y vuelve a desplegar.', 'err');
+          } else {
+            log(msgEl, 'Respuesta no-JSON del servidor:\n' + text.slice(0,500), 'err');
+          }
+          return;
+        }
+
+        if (data.ok) {
+          const list = data.files?.map((f,i)=>`✔️ Foto ${i+1}: ${f.viewUrl}`).join('\n') || '';
+          log(msgEl, `Listo. Carpeta: ${data.files?.[0]?.folderUrl || ''}\n${list}`, 'ok');
+          if (after) after(data);
+        } else {
+          log(msgEl, 'Error servidor: ' + (data.error || 'falló la subida'), 'err');
+        }
+      } catch (e) {
+        log(msgEl, 'Error de red: ' + e.message, 'err');
+      }
+    }
+
+
+    window.addEventListener('DOMContentLoaded', () => {
+      if (typeof ZXingBrowser === 'undefined') {
+        document.getElementById('msg').textContent = 'Error: ZXingBrowser no está disponible. Revisa la conexión o la carga de la librería.';
+        return;
+      }
+
+      const videoEl  = document.getElementById('preview');
+      const startBtn = document.getElementById('startBtn');
+      const photoBtn = document.getElementById('photoBtn');
+      const skuEl    = document.getElementById('sku');
+      const msgEl    = document.getElementById('msg');
+      const clearBtn = document.getElementById('clearBtn');
+      const permPill = document.getElementById('permState');
+      const uploadHint = document.getElementById('uploadHint');
+      const beep     = document.getElementById('beep');
+
+      const reader = new ZXingBrowser.BrowserMultiFormatReader();
+      let devices = [];
+      let currentId = null;
+      let stream = null;
+      let audioUnlocked = false;
+
+      function setPermState(t, cls){
+        permPill.style.display = '';
+        permPill.textContent = t;
+        permPill.style.borderColor = 'var(--stroke)';
+        permPill.style.color = (cls==='ok') ? '#22c55e' : (cls==='warn') ? '#f59e0b' : '#ef4444';
+      }
+
+      async function stop(){
+        try { reader.reset(); } catch {}
+        if (stream) { stream.getTracks().forEach(t=>t.stop()); stream = null; }
+        startBtn.disabled = false;
+      }
+
+      async function warmUp(){
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false
+        });
+        stream = s; videoEl.srcObject = s; await videoEl.play().catch(()=>{});
+      }
+
+      async function list(){
+        const inputs = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+        devices = inputs || [];
+        if(!devices.length) throw new Error('No hay cámaras disponibles');
+        if(!currentId) currentId = devices[devices.length-1].deviceId;
+      }
+
+      async function decodeWithDevice(id){
+        await reader.decodeFromVideoDevice(id, videoEl, (result, err) => {
+          if (result){
+            const v = (result.getText()||'').trim();
+            if (v && skuEl.value !== v){
+              skuEl.value = v;
+              if (beep) { beep.pause(); beep.currentTime = 0; beep.play().catch(()=>{}); }
+              log(msgEl, 'Detectado: ' + v, 'ok');
+
+              if (!isDesktopUA()){
+                // MÓVIL: abrir selección de foto(s) y subir directo
+                hiddenInput.value = ''; // reset
+                hiddenInput.onchange = () => {
+                  const files = hiddenInput.files;
+                  uploadFiles({
+                    sku: v,
+                    files,
+                    msgEl,
+                    after: () => { /* opcional: navegar, limpiar, etc. */ }
+                  });
+                };
+                hiddenInput.click();
+              } else {
+                // ESCRITORIO: preparo QR y dejo botón de subir
+                showQRForDesktop(v);
+              }
+            }
+          }
+        });
+      }
+
+      async function compressImage(file, maxDim=1600, quality=0.82) {
+        if (!/^image\//.test(file.type)) return file;
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        await new Promise(res => img.onload = res);
+
+        let { width, height } = img;
+        const scale = Math.min(1, maxDim / Math.max(width, height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+        return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' });
+      }
+
+      async function start(){
+        if(!(location.protocol === 'https:' || location.hostname === 'localhost')){ log(msgEl, 'Se requiere HTTPS.', 'warn'); return; }
+        if(!navigator.mediaDevices?.getUserMedia){ log(msgEl, 'Este navegador no soporta cámara.', 'err'); return; }
+        try{
+          setPermState('Solicitando cámara…', 'warn');
+          startBtn.disabled = true;
+          await warmUp();
+          await list();
+          await stop();
+          await decodeWithDevice(currentId);
+          setPermState('Cámara activa', 'ok');
+          log(msgEl, 'Apunta al código.', '');
+        }catch(e){
+          console.error(e);
+          setPermState('Sin cámara', 'err');
+          log(msgEl, (e?.name==='NotAllowedError'?'Permiso denegado':'No se pudo iniciar la cámara') + (e?.message?(': '+e.message):''), 'err');
+          startBtn.disabled = false;
+        }
+      }
+
+      // --- UI existente: limpiar ---
+      clearBtn.addEventListener('click', ()=>{
+        skuEl.value = '';
+        const qrDiv = document.getElementById('qr');
+        if (qrDiv){ qrDiv.innerHTML = ''; qrDiv.style.display='none'; }
+        const qrLabel = document.getElementById('qrLabel'); if (qrLabel) qrLabel.style.display='none';
+        log(msgEl, '', '');
+        skuEl.focus();
+      });
+
+      // --- Escritorio vs Móvil ---
+      const isDesktop = isDesktopUA();
+      if (isDesktop){
+        const desktopTitle = document.getElementById('desktopTitle'); if(desktopTitle) desktopTitle.style.display = '';
+        const cameraRow = document.getElementById('cameraRow'); if(cameraRow) cameraRow.style.display = 'none';
+        const qrDiv = document.getElementById('qr');
+        const qrLabel = document.getElementById('qrLabel');
+        if (videoEl) videoEl.style.display = 'none';
+        skuEl.removeAttribute('readonly');
+        skuEl.placeholder = 'Ingrese o escanee SKU/ASKU…';
+        setTimeout(()=>{ skuEl.focus(); }, 100);
+        const photoRow = document.getElementById('photoRow'); if(photoRow) photoRow.style.display = ''; // botón visible en desktop
+        uploadHint.textContent = 'Selecciona imagen desde tu equipo.';
+
+        skuEl.addEventListener('input', e => showQRForDesktop(skuEl.value.trim()));
+        function showQRForDesktop(val){
+          qrDiv.innerHTML = '';
+          if (val && val.length>0){
+            qrDiv.style.display = 'flex';
+            const url = location.href.split('#')[0];
+            new QRCode(qrDiv, { text: val, width: 240, height: 240, colorDark: '#222', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
+            if (qrLabel){
+              qrLabel.textContent = 'Código leído: escanea/usa este SKU para subir fotos.';
+              qrLabel.style.display = '';
+              qrLabel.style.textAlign = 'center';
+              qrLabel.style.margin = '8px 0 0 0';
+              qrLabel.style.opacity = '0.85';
+            }
+          } else {
+            qrDiv.style.display = 'none';
+            if (qrLabel) qrLabel.style.display = 'none';
+          }
+        }
+      } else {
+        const cameraRow = document.getElementById('cameraRow');
+        if (cameraRow) cameraRow.style.display = 'none';
+        if (videoEl) videoEl.style.display = '';
+        skuEl.setAttribute('readonly','readonly');
+        skuEl.placeholder = 'SKU detectado…';
+        const photoRow = document.getElementById('photoRow'); if(photoRow) photoRow.style.display = 'none';
+        const qrLabel = document.getElementById('qrLabel'); if(qrLabel) qrLabel.style.display = 'none';
+        // Intento auto-arranque
+        (async ()=>{ try{ await start(); }catch(e){ /* gesto requerido */ cameraRow && (cameraRow.style.display=''); } })();
+      }
+
+      // --- Botones ---
+      startBtn.addEventListener('click', async () => {
+        if (!audioUnlocked) { try { await beep.play(); beep.pause(); beep.currentTime = 0; audioUnlocked = true; } catch {} }
+        const cameraRow = document.getElementById('cameraRow'); if (cameraRow) cameraRow.style.display = 'none';
+        start();
+      });
+
+      // “Asociar fotos” (desktop y también móvil si lo muestras)
+      photoBtn.addEventListener('click', ()=>{
+        const sku = skuEl.value.trim();
+        if (!sku){ log(msgEl, 'Primero escanea o ingresa un SKU.', 'warn'); return; }
+        hiddenInput.value = '';
+        hiddenInput.onchange = () => {
+          uploadFiles({ sku, files: hiddenInput.files, msgEl });
+        };
+        hiddenInput.click();
+      });
+
+      window.addEventListener('pagehide', stop);
+      document.addEventListener('visibilitychange', ()=>{ if(document.hidden) stop(); });
+      window.addEventListener('beforeunload', stop);
+    });
+  </script>
 </body>
 </html>
