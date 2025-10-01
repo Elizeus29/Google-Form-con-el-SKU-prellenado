@@ -170,8 +170,10 @@
         const cameraRow = document.getElementById('cameraRow');
         if(cameraRow) cameraRow.style.display = 'none';
         if(videoEl) videoEl.style.display = 'none';
-        skuEl.removeAttribute('readonly');
-        skuEl.placeholder = 'Ingrese o escanee SKU/ASKU…';
+  skuEl.removeAttribute('readonly');
+  skuEl.placeholder = 'Ingrese o escanee SKU/ASKU…';
+  // Autofoco en escritorio
+  setTimeout(()=>{ skuEl.focus(); }, 100);
         // Mostrar QR al cambiar input
         const qrDiv = document.getElementById('qr');
         let qr = null;
@@ -230,9 +232,12 @@
         if(videoEl) videoEl.style.display = '';
         skuEl.setAttribute('readonly', 'readonly');
         skuEl.placeholder = 'SKU detectado…';
-        // Mostrar el botón de asociar fotos y ocultar el label
+        // Ocultar los botones de limpiar y asociar fotos en móvil
         const photoRow = document.getElementById('photoRow');
-        if(photoRow) photoRow.style.display = '';
+        if(photoRow) photoRow.style.display = 'none';
+        const clearBtn = document.getElementById('clearBtn');
+        if(clearBtn) clearBtn.style.display = 'none';
+        // Ocultar el label
         const qrLabel = document.getElementById('qrLabel');
         if(qrLabel) qrLabel.style.display = 'none';
       }
