@@ -38,7 +38,7 @@
   <script src="https://unpkg.com/@zxing/browser@0.1.5"></script>
 
   <!-- Sonido de lector de barra -->
-  <audio id="beep" src="https://cdn.jsdelivr.net/gh/eliseoconcha/ai-book-assets@main/beep-barcode.mp3" preload="auto"></audio>
+  <audio id="beep" src="scanner-beep.mp3" preload="auto"></audio>
 
   <!-- Tu código, NO type=module, y después de la librería -->
   <script>
@@ -61,6 +61,7 @@
       let devices = [];
       let currentId = null;
       let stream = null;
+      let audioUnlocked = false;
 
       function log(m){ msgEl.textContent = m; }
       async function stop(){
@@ -91,9 +92,13 @@
         await reader.decodeFromVideoDevice(id, videoEl, (result, err) => {
           if(result){
             const v = (result.getText()||"").trim();
-            if(v){
+            if(v && skuEl.value !== v){
               skuEl.value = v; log("Detectado: " + v);
-              if(beep) { beep.currentTime = 0; beep.play().catch(()=>{}); }
+              if(beep) {
+                beep.pause();
+                beep.currentTime = 0;
+                beep.play().catch(()=>{});
+              }
             }
           }
         });
@@ -125,7 +130,18 @@
         }
       }
 
-      startBtn.addEventListener('click', start);
+      startBtn.addEventListener('click', async () => {
+        // Intentar desbloquear el contexto de audio en el primer clic
+        if (!audioUnlocked) {
+          try {
+            await beep.play();
+            beep.pause();
+            beep.currentTime = 0;
+            audioUnlocked = true;
+          } catch {}
+        }
+        start();
+      });
       // flipBtn eliminado
       photoBtn.addEventListener('click', ()=>{
         log('Función de asociar fotos aún no implementada.');
@@ -133,7 +149,7 @@
       // copyBtn eliminado
 
       // Autoarranque si ya diste permiso una vez
-      start().catch(()=>{ /* quedará el botón */ });
+      // start().catch(()=>{ /* quedará el botón */ }); // Desactivado para evitar doble inicio
       window.addEventListener('pagehide', stop);
       document.addEventListener('visibilitychange', ()=>{ if(document.hidden) stop(); });
       // Detener cámara al salir de la página
