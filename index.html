@@ -4,20 +4,18 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Escáner SKU</title>
+  <!-- Evita 404 de favicon -->
   <link rel="icon" href="data:;base64,iVBORw0KGgo=" />
   <style>
     :root { --bg:#0b0f1a; --card:#111827; --ink:#fff; --accent:#2563eb; --stroke:#374151; }
-    * { box-sizing:border-box }
     body { margin:0; background:var(--bg); color:var(--ink); font-family: system-ui, Arial, sans-serif; }
     .wrap { max-width:720px; margin:0 auto; padding:10px; }
     .card { background:var(--card); border-radius:16px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.3); }
-    video { width:100%; border-radius:12px; background:#000; }
+    video { width:100%; border-radius:12px; background:#000; width:100%; height:auto; }
     .row { display:flex; gap:8px; margin:10px 0; align-items:center; flex-wrap:wrap; }
     .btn { padding:10px 14px; border-radius:10px; border:0; cursor:pointer; background:var(--accent); color:#fff; font-weight:600; }
-    .btn:disabled { opacity:.6; cursor:not-allowed; }
     .input { flex:1; min-width:160px; padding:10px; border-radius:10px; border:1px solid var(--stroke); background:#0f172a; color:#fff; }
     .msg { margin-top:8px; font-size:.95rem; opacity:.9; }
-    .small { font-size:.85rem; opacity:.8; }
   </style>
 </head>
 <body>
@@ -25,7 +23,7 @@
     <div class="card">
       <div class="row">
         <button class="btn" id="startBtn">Iniciar cámara</button>
-        <button class="btn" id="flipBtn" disabled>Cambiar cámara</button>
+        <button class="btn" id="flipBtn" disabled>Cambiar</button>
       </div>
       <video id="preview" playsinline muted autoplay></video>
       <div class="row">
@@ -33,153 +31,116 @@
         <button class="btn" id="copyBtn">Copiar</button>
       </div>
       <div id="msg" class="msg"></div>
-      <div id="hint" class="small"></div>
     </div>
   </div>
 
-  <!-- ZXing correcto para navegador (UMD global: ZXingBrowser) -->
-  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@latest/dist/index.umd.min.js"></script>
+  <!-- CARGA CORRECTA: @zxing/browser UMD (global = ZXingBrowser) -->
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.2.8/dist/index.umd.min.js"></script>
+
+  <!-- Tu código, NO type=module, y después de la librería -->
   <script>
-    // === qué haces con el código detectado ===
-    async function onCode(value){ console.log("SKU:", value); }
-    // ========================================
+    window.addEventListener('DOMContentLoaded', () => {
+      if (typeof ZXingBrowser === 'undefined') {
+        document.getElementById('msg').textContent = 'Error: ZXingBrowser no está disponible. Verifica la conexión a internet o la carga de la librería.';
+        return;
+      }
+      const videoEl  = document.getElementById('preview');
+      const startBtn = document.getElementById('startBtn');
+      const flipBtn  = document.getElementById('flipBtn');
+      const copyBtn  = document.getElementById('copyBtn');
+      const skuEl    = document.getElementById('sku');
+      const msgEl    = document.getElementById('msg');
 
-    const videoEl = document.getElementById('preview');
-    const startBtn = document.getElementById('startBtn');
-    const flipBtn  = document.getElementById('flipBtn');
-    const copyBtn  = document.getElementById('copyBtn');
-    const skuEl    = document.getElementById('sku');
-    const msgEl    = document.getElementById('msg');
-    const hintEl   = document.getElementById('hint');
+      // USAR ZXingBrowser (no ZXing)
+      const reader = new ZXingBrowser.BrowserMultiFormatReader();
 
-    // ¡OJO! Ahora el espacio de nombres es ZXingBrowser
-    const codeReader = new ZXingBrowser.BrowserMultiFormatReader();
+      let devices = [];
+      let currentId = null;
+      let stream = null;
 
-    let devices = [];
-    let currentDeviceId = null;
-    let currentStream = null;
-    let running = false;
+      function log(m){ msgEl.textContent = m; }
+      async function stop(){
+        try{ reader.reset(); }catch{}
+        if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+        skuEl.value = "";
+        log("");
+        startBtn.disabled = false;
+      }
 
-    const isSecure = () => location.protocol === "https:" || location.hostname === "localhost";
-    const isChrome = () => /chrome|chromium/i.test(navigator.userAgent) && !/edg\//i.test(navigator.userAgent);
+      async function warmUp(){
+        const s = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" }, width:{ideal:1280}, height:{ideal:720} },
+          audio: false
+        });
+        stream = s; videoEl.srcObject = s; await videoEl.play().catch(()=>{});
+      }
 
-    function log(m){ msgEl.textContent = m; }
-    function hint(m){ hintEl.textContent = m; }
-    function updateSKU(v){ skuEl.value = v; onCode(v); }
+      async function list(){
+        const inputs = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+        devices = inputs || [];
+        if(!devices.length) throw new Error("No hay cámaras disponibles");
+        if(!currentId) currentId = devices[devices.length-1].deviceId;
+        flipBtn.disabled = devices.length < 2;
+      }
 
-    async function stopAll(){
-      try{ codeReader.reset(); }catch{}
-      if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); currentStream=null; }
-      running=false;
-    }
-
-    async function warmUp(){
-      const constraints = {
-        video: {
-          facingMode: { ideal: "environment" },
-          width: { ideal: 1280 }, height: { ideal: 720 },
-          advanced: [{ facingMode: "environment" }]
-        },
-        audio: false
-      };
-      const s = await navigator.mediaDevices.getUserMedia(constraints);
-      currentStream = s; videoEl.srcObject = s; await videoEl.play().catch(()=>{});
-      return s;
-    }
-
-    async function listCameras(){
-      const inputs = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
-      devices = inputs || [];
-      if(!devices.length) throw new Error("No hay cámaras disponibles");
-      if(!currentDeviceId) currentDeviceId = devices[devices.length-1].deviceId;
-      flipBtn.disabled = devices.length < 2;
-    }
-
-    async function decodeWithConstraints(){
-      await codeReader.decodeFromConstraints(
-        { video:{ facingMode:{ideal:"environment"}, width:{ideal:1280}, height:{ideal:720} }, audio:false },
-        videoEl,
-        (result, err)=>{
+      async function decodeWithDevice(id){
+        await reader.decodeFromVideoDevice(id, videoEl, (result, err) => {
           if(result){
             const v = (result.getText()||"").trim();
-            if(v){ updateSKU(v); log("Detectado: " + v); }
+            if(v){ skuEl.value = v; log("Detectado: " + v); }
           }
-        }
-      );
-      running = true;
-    }
+        });
+      }
 
-    async function decodeWithDeviceId(id){
-      await codeReader.decodeFromVideoDevice(id, videoEl, (result, err)=>{
-        if(result){
-          const v = (result.getText()||"").trim();
-          if(v){ updateSKU(v); log("Detectado: " + v); }
+      async function start(){
+        if(!(location.protocol === 'https:' || location.hostname === 'localhost')){
+          log("Se requiere HTTPS para acceder a la cámara."); return;
         }
+        if(!navigator.mediaDevices?.getUserMedia){
+          log("Este navegador no soporta cámara."); return;
+        }
+        try{
+          log("Solicitando permiso…");
+          startBtn.disabled = true;
+          await warmUp();
+          await list();
+          await stop(); // soltamos el warm-up
+          await decodeWithDevice(currentId);
+          log("Cámara activa. Apunta al código.");
+        }catch(e){
+          console.error(e);
+          if(e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError')){
+            log("Permiso de cámara denegado. Actívalo en la configuración del navegador.");
+          }else{
+            log(e?.message || "No se pudo iniciar la cámara.");
+          }
+          startBtn.disabled = false;
+        }
+      }
+
+      startBtn.addEventListener('click', start);
+      flipBtn.addEventListener('click', async ()=>{
+        try{
+          await list();
+          const i = devices.findIndex(d=>d.deviceId===currentId);
+          currentId = devices[(i+1)%devices.length].deviceId;
+          await stop();
+          await decodeWithDevice(currentId);
+          log("Cámara cambiada.");
+        }catch(e){ log("No se pudo cambiar de cámara."); }
       });
-      running = true;
-    }
+      copyBtn.addEventListener('click', async ()=>{
+        if(!skuEl.value) return;
+        try{ await navigator.clipboard.writeText(skuEl.value); log("SKU copiado."); }catch{ log("No se pudo copiar."); }
+      });
 
-    function explainError(e){
-      switch(e && e.name){
-        case "NotAllowedError": return "Permiso de cámara denegado. En Chrome: candado ▶ Permisos ▶ Cámara ▶ Permitir.";
-        case "NotFoundError":   return "No se encontró ninguna cámara.";
-        case "NotReadableError":return "Otra app está usando la cámara.";
-        case "OverconstrainedError": return "Resolución no soportada. Reintentando baja resolución…";
-        default: return e?.message || "Error al iniciar la cámara.";
-      }
-    }
-
-    async function startFlow(){
-      if(!isSecure()){ log("Sirve la página por HTTPS (GitHub Pages ya lo es)."); return; }
-      if(!navigator.mediaDevices?.getUserMedia){ log("Este navegador no soporta cámara."); return; }
-
-      try{
-        log("Solicitando acceso a la cámara…");
-        await warmUp();
-        await listCameras();
-
-        await stopAll();
-        if(isChrome()){
-          try{ await decodeWithDeviceId(currentDeviceId); log("Cámara activa. Apunta al código."); return; }
-          catch(e){ console.warn("deviceId falló", e); }
-        }
-        try{ await decodeWithConstraints(); log("Cámara activa. Apunta al código."); }
-        catch(e){ console.warn("constraints falló", e); await decodeWithDeviceId(currentDeviceId); log("Cámara activa. Apunta al código."); }
-
-      }catch(e){
-        console.error(e);
-        log(explainError(e));
-        if(e?.name==="OverconstrainedError"){
-          try{
-            await stopAll();
-            const s = await navigator.mediaDevices.getUserMedia({ video:{width:640,height:480}, audio:false });
-            currentStream = s; videoEl.srcObject = s; await videoEl.play().catch(()=>{});
-            await listCameras(); await decodeWithDeviceId(currentDeviceId);
-            log("Cámara activa (baja resolución).");
-          }catch(e2){ console.error(e2); log(explainError(e2)); }
-        }
-      }
-    }
-
-    document.getElementById('startBtn').addEventListener('click', startFlow);
-    document.getElementById('flipBtn').addEventListener('click', async ()=>{
-      try{
-        await listCameras();
-        const i = devices.findIndex(d=>d.deviceId===currentDeviceId);
-        currentDeviceId = devices[(i+1)%devices.length].deviceId;
-        await stopAll(); await decodeWithDeviceId(currentDeviceId);
-        log("Cámara cambiada. Apunta al código.");
-      }catch(e){ console.error(e); log("No se pudo cambiar de cámara."); }
+      // Autoarranque si ya diste permiso una vez
+      start().catch(()=>{ /* quedará el botón */ });
+      window.addEventListener('pagehide', stop);
+      document.addEventListener('visibilitychange', ()=>{ if(document.hidden) stop(); });
+      // Detener cámara al salir de la página
+      window.addEventListener('beforeunload', stop);
     });
-    document.getElementById('copyBtn').addEventListener('click', async ()=>{
-      if(!skuEl.value) return; try{ await navigator.clipboard.writeText(skuEl.value); log("SKU copiado."); }catch{ log("No se pudo copiar."); }
-    });
-
-    // Auto-arranque si ya diste permiso antes
-    (async()=>{ try{ await startFlow(); }catch{} })();
-
-    document.addEventListener('visibilitychange', ()=>{ if(document.hidden) stopAll(); });
-    window.addEventListener('pagehide', ()=>{ stopAll(); });
   </script>
 </body>
 </html>
