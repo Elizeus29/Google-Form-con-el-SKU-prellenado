@@ -79,26 +79,60 @@
       el.textContent = msg || '';
     }
 
-    async function uploadFiles({ sku, files, msgEl, after }){
+    async function uploadFiles({ sku, files, msgEl, after }) {
       if (!sku || !files || !files.length) { log(msgEl, 'Falta SKU o archivo.', 'warn'); return; }
+
       const fd = new FormData();
       fd.append('sku', sku);
-      for (const f of files) fd.append('file', f);
-      log(msgEl, 'Subiendo…', ''); 
+      for (const f0 of files) {
+        const f = await compressImage(f0); // opcional
+        fd.append('file', f);
+      }
+
+      log(msgEl, 'Subiendo…', '');
+
       try {
-        const r = await fetch(WEBAPP_URL, { method:'POST', body: fd });
-        const j = await r.json();
-        if (j.ok) {
-          const list = j.files?.map((f,i)=>`✔️ Foto ${i+1}: ${f.viewUrl}`).join('\n') || '';
-          log(msgEl, `Listo. Carpeta: ${j.files?.[0]?.folderUrl || ''}\n${list}`, 'ok');
-          if (after) after(j);
+        const r = await fetch(WEBAPP_URL, {
+          method: 'POST',
+          body: fd,
+          // MUY IMPORTANTE para evitar enviar cookies y provocar redirects raros:
+          credentials: 'omit',
+          redirect: 'follow', // si el server redirige a login, aquí no tendremos CORS ok, pero al menos lo sabremos
+        });
+
+        const text = await r.text(); // lee texto crudo por si el server devolvió HTML de login
+        // Intenta parsear JSON
+        let data = null;
+        try { data = JSON.parse(text); } catch (e) { /* no JSON */ }
+
+        if (!r.ok) {
+          // 302/401/403 suelen indicar permisos malos o login requerido
+          log(msgEl, `HTTP ${r.status}. Verifica permisos del deployment y que uses la URL /exec.\nRespuesta:\n${text.slice(0,500)}`, 'err');
+          return;
+        }
+
+        // Si vino HTML (p.ej. página de login), detecta
+        if (!data || typeof data !== 'object') {
+          if (/accounts\.google\.com/i.test(text) || /<html/i.test(text)) {
+            log(msgEl, 'Parece que la Web App pide login. En Apps Script cambia "Who has access" a "Anyone" y vuelve a desplegar.', 'err');
+          } else {
+            log(msgEl, 'Respuesta no-JSON del servidor:\n' + text.slice(0,500), 'err');
+          }
+          return;
+        }
+
+        if (data.ok) {
+          const list = data.files?.map((f,i)=>`✔️ Foto ${i+1}: ${f.viewUrl}`).join('\n') || '';
+          log(msgEl, `Listo. Carpeta: ${data.files?.[0]?.folderUrl || ''}\n${list}`, 'ok');
+          if (after) after(data);
         } else {
-          log(msgEl, 'Error: ' + (j.error || 'falló la subida'), 'err');
+          log(msgEl, 'Error servidor: ' + (data.error || 'falló la subida'), 'err');
         }
       } catch (e) {
-        log(msgEl, 'Error de red: ' + e, 'err');
+        log(msgEl, 'Error de red: ' + e.message, 'err');
       }
     }
+
 
     window.addEventListener('DOMContentLoaded', () => {
       if (typeof ZXingBrowser === 'undefined') {
@@ -179,6 +213,24 @@
             }
           }
         });
+      }
+
+      async function compressImage(file, maxDim=1600, quality=0.82) {
+        if (!/^image\//.test(file.type)) return file;
+        const img = new Image();
+        img.src = URL.createObjectURL(file);
+        await new Promise(res => img.onload = res);
+
+        let { width, height } = img;
+        const scale = Math.min(1, maxDim / Math.max(width, height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(width * scale);
+        canvas.height = Math.round(height * scale);
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+        const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', quality));
+        return new File([blob], file.name.replace(/\.\w+$/, '.jpg'), { type: 'image/jpeg' });
       }
 
       async function start(){
