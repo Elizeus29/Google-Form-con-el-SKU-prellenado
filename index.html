@@ -7,218 +7,154 @@
   <style>
     :root { --bg:#0b0f1a; --card:#111827; --ink:#fff; --accent:#2563eb; --stroke:#374151; }
     * { box-sizing:border-box }
-    html,body { height:100% }
     body { margin:0; background:var(--bg); color:var(--ink); font-family: system-ui, Arial, sans-serif; }
     .wrap { max-width:720px; margin:0 auto; padding:10px; }
     .card { background:var(--card); border-radius:16px; padding:12px; box-shadow:0 10px 30px rgba(0,0,0,.3); }
     video { width:100%; border-radius:12px; background:#000; }
-    .row { display:flex; gap:8px; margin:10px 0; align-items:center; }
+    .row { display:flex; gap:8px; margin:10px 0; align-items:center; flex-wrap:wrap; }
     .btn { padding:10px 14px; border-radius:10px; border:0; cursor:pointer; background:var(--accent); color:#fff; font-weight:600; }
     .btn:disabled { opacity:.6; cursor:not-allowed; }
     .input { flex:1; min-width:160px; padding:10px; border-radius:10px; border:1px solid var(--stroke); background:#0f172a; color:#fff; }
-    .overlay {
-      position:fixed; inset:0; display:none; place-items:center; background:rgba(0,0,0,.6);
-      font-weight:700; font-size:1.1rem; text-align:center; padding:24px;
-    }
-    .tap { background:#fff; color:#111; padding:14px 18px; border-radius:12px; }
+    .msg  { margin-top:8px; font-size:.95rem; opacity:.85; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <div class="row">
-        <button class="btn" id="flipBtn">Cambiar cámara</button>
+        <button class="btn" id="startBtn">Iniciar cámara</button>
+        <button class="btn" id="flipBtn" disabled>Cambiar</button>
       </div>
       <video id="preview" playsinline muted autoplay></video>
       <div class="row">
         <input id="sku" class="input" placeholder="SKU detectado…" readonly />
         <button class="btn" id="copyBtn">Copiar</button>
       </div>
+      <div id="msg" class="msg"></div>
     </div>
   </div>
 
-  <div class="overlay" id="overlay">
-    <div class="tap">Toca para iniciar la cámara</div>
-  </div>
-
-  <!-- ZXing (lector de códigos) -->
   <script src="https://cdn.jsdelivr.net/npm/@zxing/library@latest"></script>
   <script>
-    // ======= Configura qué hacer cuando se detecta el código =======
-    async function onCode(value) {
-      // Aquí tienes el SKU. Ejemplos:
-      // 1) Solo mostrar (ya se muestra en el input):
-      // 2) Enviar a tu API:
-      // await fetch("https://tu-api/sku", { method:"POST", headers:{ "Content-Type":"application/json" }, body: JSON.stringify({ sku:value }) });
-      // 3) Guardar en localStorage:
-      // localStorage.setItem("lastSKU", value);
-      console.log("SKU:", value);
-    }
-    // ===============================================================
-
-    const videoEl  = document.getElementById('preview');
-    const flipBtn  = document.getElementById('flipBtn');
-    const skuEl    = document.getElementById('sku');
-    const copyBtn  = document.getElementById('copyBtn');
-    const overlay  = document.getElementById('overlay');
-
     const codeReader = new ZXing.BrowserMultiFormatReader();
+    const videoEl  = document.getElementById('preview');
+    const startBtn = document.getElementById('startBtn');
+    const flipBtn  = document.getElementById('flipBtn');
+    const copyBtn  = document.getElementById('copyBtn');
+    const skuEl    = document.getElementById('sku');
+    const msgEl    = document.getElementById('msg');
+
     let devices = [];
     let currentDeviceId = null;
     let currentStream = null;
     let running = false;
 
-    function isChromeMobile() {
-      const ua = navigator.userAgent.toLowerCase();
-      return /android/.test(ua) && /chrome\//.test(ua) && !/edg\//.test(ua);
+    function log(msg){ msgEl.textContent = msg; }
+    function isChromeMobile(){ const ua = navigator.userAgent.toLowerCase(); return /android/.test(ua)&&/chrome\//.test(ua)&&!/edg\//.test(ua); }
+
+    async function stopAll(){
+      try{ codeReader.reset(); }catch(e){}
+      if(currentStream){ currentStream.getTracks().forEach(t=>t.stop()); currentStream=null; }
+      running=false;
     }
 
-    function showOverlay() { overlay.style.display = "grid"; }
-    function hideOverlay() { overlay.style.display = "none"; }
-
-    function updateSKU(value) {
-      skuEl.value = value;
-      onCode(value);
-    }
-
-    async function stopCurrentStream() {
-      try { codeReader.reset(); } catch {}
-      if (currentStream) {
-        currentStream.getTracks().forEach(t => t.stop());
-        currentStream = null;
-      }
-      running = false;
-    }
-
-    async function warmUp() {
-      // Pide permiso y muestra previsualización para desbloquear enumerateDevices
+    async function warmUp(){
       const constraints = {
         video: {
           facingMode: { ideal: "environment" },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          focusMode: "continuous",
-          advanced: [ { facingMode: "environment" } ]
-        },
-        audio: false
+          width: { ideal: 1280 }, height: { ideal: 720 },
+          focusMode: "continuous", advanced:[{ facingMode:"environment" }]
+        }, audio:false
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       currentStream = stream;
       videoEl.srcObject = stream;
-      await videoEl.play().catch(() => {});
-      return stream;
+      await videoEl.play().catch(()=>{});
     }
 
-    async function listCameras() {
+    async function listCameras(){
       const inputs = await ZXing.BrowserCodeReader.listVideoInputDevices();
       devices = inputs || [];
-      if (!devices.length) throw new Error("No hay cámaras disponibles");
-      if (!currentDeviceId) currentDeviceId = devices[devices.length - 1].deviceId; // normalmente trasera
+      flipBtn.disabled = devices.length < 2;
+      if(!devices.length) throw new Error("No hay cámaras disponibles");
+      if(!currentDeviceId) currentDeviceId = devices[devices.length-1].deviceId; // preferir trasera
     }
 
-    async function tryDecodeWithDeviceId(id) {
+    async function decodeWithDevice(id){
       await codeReader.decodeFromVideoDevice(id, videoEl, (result, err) => {
-        if (result) {
-          const value = (result.getText() || "").trim();
-          if (value) updateSKU(value);
+        if(result){
+          const v = (result.getText()||"").trim();
+          if(v){ skuEl.value = v; log("Detectado: "+v); }
         }
       });
-      running = true;
+      running=true;
     }
 
-    async function tryDecodeWithConstraints() {
+    async function decodeWithConstraints(){
       await codeReader.decodeFromConstraints(
-        {
-          video: {
-            facingMode: { ideal: "environment" },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        },
+        { video:{ facingMode:{ideal:"environment"}, width:{ideal:1280}, height:{ideal:720} }, audio:false },
         videoEl,
-        (result, err) => {
-          if (result) {
-            const value = (result.getText() || "").trim();
-            if (value) updateSKU(value);
+        (result, err)=>{
+          if(result){
+            const v = (result.getText()||"").trim();
+            if(v){ skuEl.value = v; log("Detectado: "+v); }
           }
         }
       );
-      running = true;
+      running=true;
     }
 
-    async function startScanFlow() {
-      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-        throw new Error("Este navegador no permite acceso a la cámara");
-      }
-
-      // 1) Pide permisos y precalienta
-      await warmUp();
-      await listCameras();
-
-      // 2) En Chrome Android, deviceId suele ser más estable
-      if (isChromeMobile()) {
-        try {
-          await stopCurrentStream();
-          await tryDecodeWithDeviceId(currentDeviceId);
-          return;
-        } catch (e) {
-          console.warn("deviceId directo falló, probando constraints…", e);
-        }
-      }
-
-      // 3) Constraints como camino general
-      try {
-        await tryDecodeWithConstraints();
+    async function start(){
+      if(location.protocol !== "https:" && location.hostname !== "localhost"){
+        log("Este sitio debe servirse por HTTPS para usar la cámara.");
         return;
-      } catch (e) {
-        console.warn("constraints falló, probando deviceId…", e);
       }
+      if(!navigator.mediaDevices?.getUserMedia){
+        log("El navegador no soporta getUserMedia.");
+        return;
+      }
+      try{
+        log("Solicitando permisos de cámara…");
+        await warmUp();                 // pide permiso y muestra preview
+        await listCameras();
 
-      // 4) Fallback a deviceId
-      await stopCurrentStream();
-      await tryDecodeWithDeviceId(currentDeviceId);
+        await stopAll();
+        if(isChromeMobile()){
+          log("Iniciando cámara (Chrome/Android)...");
+          await decodeWithDevice(currentDeviceId); // deviceId suele ser más estable
+        }else{
+          log("Iniciando cámara…");
+          await decodeWithConstraints();          // Safari/otros
+        }
+        log("Cámara activa. Apunta al código.");
+      }catch(e){
+        console.error(e);
+        log("No se pudo iniciar la cámara. Revisa permisos del sitio en tu navegador.");
+      }
     }
 
-    // Arranca automáticamente al cargar; si el navegador exige gesto, mostramos overlay
-    (async () => {
-      try {
-        await startScanFlow();
-      } catch (e) {
-        console.warn("Autostart bloqueado o falló:", e);
-        showOverlay();
-      }
-    })();
+    startBtn.addEventListener('click', start);
 
-    overlay.addEventListener("click", async () => {
-      hideOverlay();
-      try { await startScanFlow(); }
-      catch (e) {
-        alert("No se pudo iniciar la cámara. Revisa permisos del sitio para la cámara.");
-      }
-    });
-
-    flipBtn.addEventListener('click', async () => {
-      try {
+    flipBtn.addEventListener('click', async ()=>{
+      try{
         await listCameras();
-        const idx = devices.findIndex(d => d.deviceId === currentDeviceId);
-        currentDeviceId = devices[(idx + 1) % devices.length].deviceId;
-        await stopCurrentStream();
-        if (isChromeMobile()) await tryDecodeWithDeviceId(currentDeviceId);
-        else await tryDecodeWithConstraints();
-      } catch (e) {
-        alert("No se pudo cambiar de cámara.");
-      }
+        const idx = devices.findIndex(d=>d.deviceId===currentDeviceId);
+        currentDeviceId = devices[(idx+1)%devices.length].deviceId;
+        await stopAll();
+        if(isChromeMobile()) await decodeWithDevice(currentDeviceId);
+        else await decodeWithConstraints();
+      }catch(e){ console.error(e); log("No se pudo cambiar de cámara."); }
     });
 
-    copyBtn.addEventListener('click', async () => {
-      const value = skuEl.value;
-      if (!value) return;
-      try { await navigator.clipboard.writeText(value); }
-      catch {}
+    copyBtn.addEventListener('click', async ()=>{
+      if(!skuEl.value) return;
+      try{ await navigator.clipboard.writeText(skuEl.value); log("SKU copiado."); }catch(e){ log("No se pudo copiar."); }
     });
 
-    window.addEventListener('pagehide', () => { stopCurrentStream(); });
+    // Intenta auto-arranque; si falla, deja el botón visible
+    (async()=>{ try{ await start(); }catch(e){ /* el botón queda para gesto manual */ } })();
+
+    window.addEventListener('pagehide', ()=>{ stopAll(); });
   </script>
 </body>
 </html>
