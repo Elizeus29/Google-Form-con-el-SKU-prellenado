@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>Escáner SKU</title>
+  <!-- Evita 404 de favicon -->
   <link rel="icon" href="data:;base64,iVBORw0KGgo=" />
   <style>
     :root { --bg:#0b0f1a; --card:#111827; --ink:#fff; --accent:#2563eb; --stroke:#374151; }
@@ -14,146 +15,82 @@
     .row { display:flex; gap:8px; margin:10px 0; align-items:center; flex-wrap:wrap; }
     .btn { padding:10px 14px; border-radius:10px; border:0; cursor:pointer; background:var(--accent); color:#fff; font-weight:600; }
     .input { flex:1; min-width:160px; padding:10px; border-radius:10px; border:1px solid var(--stroke); background:#0f172a; color:#fff; }
-    .msg { margin-top:8px; font-size:.95rem; opacity:.9; white-space:pre-wrap }
-    .pill { display:inline-block; padding:4px 8px; border-radius:999px; background:#0f172a; border:1px solid var(--stroke); font-size:.8rem; opacity:.9 }
-    .ok { color:#22c55e } .warn{ color:#f59e0b } .err{ color:#ef4444 }
+    .msg { margin-top:8px; font-size:.95rem; opacity:.9; }
   </style>
 </head>
 <body>
   <div class="wrap">
     <div class="card">
       <div id="desktopTitle" style="display:none;text-align:center;font-size:1.2rem;font-weight:600;margin-bottom:12px;opacity:.92;">Escanea el código de barra del producto.</div>
-
       <div class="row" id="cameraRow">
         <button class="btn" id="startBtn">Iniciar cámara</button>
-        <span class="pill" id="permState" style="display:none"></span>
       </div>
-
       <video id="preview" playsinline muted autoplay></video>
-
       <div class="row">
         <input id="sku" class="input" placeholder="SKU detectado…" readonly />
         <button class="btn" id="clearBtn" type="button">Limpiar Código</button>
       </div>
-
       <div id="qr" style="display:none;justify-content:center;margin:16px 0;"></div>
       <div id="qrLabel" style="display:none;"></div>
-
       <div class="row" id="photoRow">
-        <button class="btn" id="photoBtn" type="button">Asociar fotos</button>
-        <span id="uploadHint" class="small" style="opacity:.8"></span>
+        <button class="btn" id="photoBtn">Asociar fotos</button>
       </div>
-
       <div id="msg" class="msg"></div>
     </div>
   </div>
 
-  <!-- ZXing navegador (global: ZXingBrowser) -->
+  <!-- CARGA CORRECTA: @zxing/browser UMD (global = ZXingBrowser) -->
   <script src="https://unpkg.com/@zxing/browser@0.1.5"></script>
-  <!-- Sonido -->
+
+  <!-- Sonido de lector de barra -->
   <audio id="beep" src="scanner-beep.mp3" preload="auto"></audio>
-  <!-- QRCode para escritorio -->
+
+  <!-- QRCode.js para escritorio -->
   <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
 
-  <!-- ===== Form oculto (target a iframe) para evitar CORS y sin ventanas nuevas ===== -->
-  <form id="gsForm"
-        action="https://script.google.com/macros/s/AKfycbyCi-LjCMfE6aSch_1RMA4KI7g8KRrP_4RKfmx_1ihPCeiWhJ49Jn3F1dTCagSPVQGl9w/exec"
-        method="POST" enctype="multipart/form-data"
-        style="display:none">
-    <input type="hidden" name="sku" id="gsSku">
-    <input type="file"   name="file" id="gsFile" accept="image/*" capture="environment" multiple>
-  </form>
-  <iframe name="gsFrame" id="gsFrame" style="display:none"></iframe>
-  <!-- ============================================================================== -->
-
+  <!-- Tu código, NO type=module, y después de la librería -->
   <script>
-    // Si cambiaste el deployment, actualiza también el action del form:
-    const WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbyCi-LjCMfE6aSch_1RMA4KI7g8KRrP_4RKfmx_1ihPCeiWhJ49Jn3F1dTCagSPVQGl9w/exec';
-    document.getElementById('gsForm').setAttribute('action', WEBAPP_URL);
-
-    function isDesktopUA(){
-      return !/android|iphone|ipad|ipod|mobile|windows phone/i.test(navigator.userAgent);
-    }
-    function log(el, msg, cls){
-      if (cls) el.className = 'msg ' + cls;
-      el.textContent = msg || '';
-    }
-
-    // Escucha el resultado desde el iframe (Apps Script envía postMessage)
-    window.addEventListener('message', (ev) => {
-      try {
-        const data = ev.data || {};
-        if (data && data.type === 'gs-upload') {
-          const msgEl = document.getElementById('msg');
-          if (data.ok) {
-            const list = (data.files || []).map((f, i) => `✔️ Foto ${i+1}: ${f.viewUrl}`).join('\n');
-            msgEl.className = 'msg ok';
-            msgEl.textContent = `Listo. Carpeta: ${(data.files && data.files[0] && data.files[0].folderUrl) || ''}\n${list}`;
-          } else {
-            msgEl.className = 'msg err';
-            msgEl.textContent = 'Error: ' + (data.error || 'falló la subida');
-          }
-        }
-      } catch (_) {}
-    });
-
-    // Carga de archivos vía FORM (evita CORS y ventanas nuevas)
-    function uploadViaForm(sku, msgEl){
-      const form = document.getElementById('gsForm');
-      const skuHidden = document.getElementById('gsSku');
-      const fileInput = document.getElementById('gsFile');
-      if (!form || !skuHidden || !fileInput) { msgEl.textContent='Formulario oculto no encontrado.'; return; }
-      if (!sku) { msgEl.textContent='Falta SKU.'; return; }
-
-      skuHidden.value = sku;
-      fileInput.value = '';
-      fileInput.onchange = () => {
-        if (!fileInput.files.length) { msgEl.textContent='No se seleccionó imagen.'; return; }
-        msgEl.className = 'msg warn';
-        msgEl.textContent = 'Subiendo…';
-        form.submit(); // envía al iframe; el resultado llegará por postMessage
-      };
-      fileInput.click(); // abre cámara en móvil
-    }
-
     window.addEventListener('DOMContentLoaded', () => {
       if (typeof ZXingBrowser === 'undefined') {
-        document.getElementById('msg').textContent = 'Error: ZXingBrowser no está disponible. Revisa la conexión o la carga de la librería.';
+        document.getElementById('msg').textContent = 'Error: ZXingBrowser no está disponible. Verifica la conexión a internet o la carga de la librería.';
         return;
       }
-
-      const videoEl  = document.getElementById('preview');
+  const videoEl  = document.getElementById('preview');
       const startBtn = document.getElementById('startBtn');
       const photoBtn = document.getElementById('photoBtn');
       const skuEl    = document.getElementById('sku');
-      const msgEl    = document.getElementById('msg');
-      const clearBtn = document.getElementById('clearBtn');
-      const permPill = document.getElementById('permState');
-      const uploadHint = document.getElementById('uploadHint');
+  const msgEl    = document.getElementById('msg');
+  const clearBtn = document.getElementById('clearBtn');
+      // Limpiar el input SKU y el QR al pulsar el botón
+      clearBtn.addEventListener('click', ()=>{
+        skuEl.value = '';
+        // Forzar evento input para limpiar QR y label
+        const event = new Event('input', { bubbles: true });
+        skuEl.dispatchEvent(event);
+        skuEl.focus();
+      });
       const beep     = document.getElementById('beep');
 
+      // USAR ZXingBrowser (no ZXing)
       const reader = new ZXingBrowser.BrowserMultiFormatReader();
+
       let devices = [];
       let currentId = null;
       let stream = null;
       let audioUnlocked = false;
 
-      function setPermState(t, cls){
-        permPill.style.display = '';
-        permPill.textContent = t;
-        permPill.style.borderColor = 'var(--stroke)';
-        permPill.style.color = (cls==='ok') ? '#22c55e' : (cls==='warn') ? '#f59e0b' : '#ef4444';
-      }
-
+      function log(m){ msgEl.textContent = m; }
       async function stop(){
-        try { reader.reset(); } catch {}
-        if (stream) { stream.getTracks().forEach(t=>t.stop()); stream = null; }
+        try{ reader.reset(); }catch{}
+        if(stream){ stream.getTracks().forEach(t=>t.stop()); stream=null; }
+        skuEl.value = "";
+        log("");
         startBtn.disabled = false;
       }
 
       async function warmUp(){
         const s = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          video: { facingMode: { ideal: "environment" }, width:{ideal:1280}, height:{ideal:720} },
           audio: false
         });
         stream = s; videoEl.srcObject = s; await videoEl.play().catch(()=>{});
@@ -162,25 +99,35 @@
       async function list(){
         const inputs = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
         devices = inputs || [];
-        if(!devices.length) throw new Error('No hay cámaras disponibles');
+        if(!devices.length) throw new Error("No hay cámaras disponibles");
         if(!currentId) currentId = devices[devices.length-1].deviceId;
       }
 
       async function decodeWithDevice(id){
         await reader.decodeFromVideoDevice(id, videoEl, (result, err) => {
-          if (result){
-            const v = (result.getText()||'').trim();
-            if (v && skuEl.value !== v){
-              skuEl.value = v;
-              if (beep) { beep.pause(); beep.currentTime = 0; beep.play().catch(()=>{}); }
-              log(msgEl, 'Detectado: ' + v, 'ok');
-
-              if (!isDesktopUA()){
-                // MÓVIL: pedir fotos y subir con form (sin CORS / sin ventanas)
-                uploadViaForm(v, msgEl);
-              } else {
-                // ESCRITORIO: muestro QR y dejo botón de subir
-                showQRForDesktop(v);
+          if(result){
+            const v = (result.getText()||"").trim();
+            if(v && skuEl.value !== v){
+              skuEl.value = v; log("Detectado: " + v);
+              if(beep) {
+                beep.pause();
+                beep.currentTime = 0;
+                beep.play().catch(()=>{});
+              }
+              // Si es escritorio, mostrar QR
+              if(isDesktop){
+                const qrDiv = document.getElementById('qr');
+                qrDiv.innerHTML = '';
+                if(v.length>0){
+                  qrDiv.style.display = 'flex';
+                  new QRCode(qrDiv, { text: v, width: 160, height: 160, colorDark: '#222', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
+                }else{
+                  qrDiv.style.display = 'none';
+                }
+              }else{
+                // En móvil, redirigir automáticamente al Google Form con el SKU
+                const formUrl = 'https://docs.google.com/forms/d/e/1FAIpQLScua9KznddTAn4XUVzRsLc4zmzeDzVg7gkhNLbklKp4yOQYBg/viewform?usp=pp_url&entry.5441271=' + encodeURIComponent(v);
+                window.location.href = formUrl;
               }
             }
           }
@@ -188,90 +135,134 @@
       }
 
       async function start(){
-        if(!(location.protocol === 'https:' || location.hostname === 'localhost')){ log(msgEl, 'Se requiere HTTPS.', 'warn'); return; }
-        if(!navigator.mediaDevices?.getUserMedia){ log(msgEl, 'Este navegador no soporta cámara.', 'err'); return; }
+        if(!(location.protocol === 'https:' || location.hostname === 'localhost')){
+          log("Se requiere HTTPS para acceder a la cámara."); return;
+        }
+        if(!navigator.mediaDevices?.getUserMedia){
+          log("Este navegador no soporta cámara."); return;
+        }
         try{
-          setPermState('Solicitando cámara…', 'warn');
+          log("Solicitando permiso…");
           startBtn.disabled = true;
           await warmUp();
           await list();
-          await stop();
+          await stop(); // soltamos el warm-up
           await decodeWithDevice(currentId);
-          setPermState('Cámara activa', 'ok');
-          log(msgEl, 'Apunta al código.', '');
+          log("Cámara activa. Apunta al código.");
         }catch(e){
           console.error(e);
-          setPermState('Sin cámara', 'err');
-          log(msgEl, (e?.name==='NotAllowedError'?'Permiso denegado':'No se pudo iniciar la cámara') + (e?.message?(': '+e.message):''), 'err');
+          if(e && (e.name === 'NotAllowedError' || e.name === 'PermissionDeniedError')){
+            log("Permiso de cámara denegado. Actívalo en la configuración del navegador.");
+          }else{
+            log(e?.message || "No se pudo iniciar la cámara.");
+          }
           startBtn.disabled = false;
         }
       }
 
-      // Limpiar
-      clearBtn.addEventListener('click', ()=>{
-        skuEl.value = '';
+  // Detectar si es escritorio
+      const isDesktop = !/android|iphone|ipad|ipod|mobile|windows phone/i.test(navigator.userAgent);
+      if(isDesktop){
+        // Mostrar título superior en escritorio
+        const desktopTitle = document.getElementById('desktopTitle');
+        if(desktopTitle) desktopTitle.style.display = '';
+        // Oculta el botón de cámara y el video solo en escritorio
+        const cameraRow = document.getElementById('cameraRow');
+        if(cameraRow) cameraRow.style.display = 'none';
+        if(videoEl) videoEl.style.display = 'none';
+  skuEl.removeAttribute('readonly');
+  skuEl.placeholder = 'Ingrese o escanee SKU/ASKU…';
+  // Autofoco en escritorio
+  setTimeout(()=>{ skuEl.focus(); }, 100);
+        // Mostrar QR al cambiar input
         const qrDiv = document.getElementById('qr');
-        if (qrDiv){ qrDiv.innerHTML = ''; qrDiv.style.display='none'; }
-        const qrLabel = document.getElementById('qrLabel'); if (qrLabel) qrLabel.style.display='none';
-        log(msgEl, '', '');
-        skuEl.focus();
-      });
-
-      // Escritorio vs Móvil
-      const isDesktop = isDesktopUA();
-      if (isDesktop){
-        const desktopTitle = document.getElementById('desktopTitle'); if(desktopTitle) desktopTitle.style.display = '';
-        const cameraRow = document.getElementById('cameraRow'); if(cameraRow) cameraRow.style.display = 'none';
-        const qrDiv = document.getElementById('qr');
-        const qrLabel = document.getElementById('qrLabel');
-        if (videoEl) videoEl.style.display = 'none';
-        skuEl.removeAttribute('readonly');
-        skuEl.placeholder = 'Ingrese o escanee SKU/ASKU…';
-        setTimeout(()=>{ skuEl.focus(); }, 100);
-        const photoRow = document.getElementById('photoRow'); if(photoRow) photoRow.style.display = ''; // botón visible en desktop
-        uploadHint.textContent = 'Selecciona imagen desde tu equipo.';
-
-        skuEl.addEventListener('input', e => showQRForDesktop(skuEl.value.trim()));
-        function showQRForDesktop(val){
+        let qr = null;
+        function showQR(val){
           qrDiv.innerHTML = '';
-          if (val && val.length>0){
+          let qrLabel = document.getElementById('qrLabel');
+          if(qrLabel){
+            qrLabel.textContent = 'Escanea el QR para cargar las fotos.';
+            qrLabel.style.textAlign = 'center';
+            qrLabel.style.margin = '8px 0 0 0';
+            qrLabel.style.opacity = '0.85';
+          }
+          if(val && val.length>0){
             qrDiv.style.display = 'flex';
-            new QRCode(qrDiv, { text: val, width: 240, height: 240, colorDark: '#222', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
-            if (qrLabel){
-              qrLabel.textContent = 'Código leído: escanea/usa este SKU para subir fotos.';
-              qrLabel.style.display = '';
-              qrLabel.style.textAlign = 'center';
-              qrLabel.style.margin = '8px 0 0 0';
-              qrLabel.style.opacity = '0.85';
-            }
-          } else {
+            // El QR contendrá la URL del Google Form con el SKU prellenado
+            const formUrl = 'https://docs.google.com/forms/d/e/1FAIpQLScua9KznddTAn4XUVzRsLc4zmzeDzVg7gkhNLbklKp4yOQYBg/viewform?usp=pp_url&entry.5441271=' + encodeURIComponent(val);
+            qr = new QRCode(qrDiv, { text: formUrl, width: 240, height: 240, colorDark: '#222', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
+            // Hacer clic en el QR abre el Google Form con el SKU
+            qrDiv.style.cursor = 'pointer';
+            qrDiv.onclick = ()=>{
+              window.open(formUrl, '_blank');
+            };
+            // Mostrar el label
+            if(qrLabel) qrLabel.style.display = '';
+          }else{
             qrDiv.style.display = 'none';
-            if (qrLabel) qrLabel.style.display = 'none';
+            qrDiv.style.cursor = '';
+            qrDiv.onclick = null;
+            // Ocultar el label si existe
+            if(qrLabel) qrLabel.style.display = 'none';
           }
         }
-      } else {
+        skuEl.addEventListener('input', e=>{
+          showQR(skuEl.value.trim());
+        });
+        // En escritorio, ocultar el botón y mostrar label
+        const photoRow = document.getElementById('photoRow');
+        if(photoRow) photoRow.style.display = 'none';
+        // Crear label si no existe
+        let qrLabel = document.getElementById('qrLabel');
+        if(!qrLabel){
+          qrLabel = document.createElement('div');
+          qrLabel.id = 'qrLabel';
+          qrLabel.textContent = 'Escanea el QR para cargar las fotos.';
+          qrLabel.style.textAlign = 'center';
+          qrLabel.style.margin = '8px 0 0 0';
+          qrLabel.style.opacity = '0.85';
+          qrDiv.parentNode.insertBefore(qrLabel, qrDiv.nextSibling);
+        }else{
+          qrLabel.style.display = '';
+        }
+      }else{
+        // En móvil, asegurarse que el video y el botón de cámara estén visibles
         const cameraRow = document.getElementById('cameraRow');
-        if (cameraRow) cameraRow.style.display = 'none';
-        if (videoEl) videoEl.style.display = '';
-        skuEl.setAttribute('readonly','readonly');
+        if(cameraRow) cameraRow.style.display = '';
+        if(videoEl) videoEl.style.display = '';
+        skuEl.setAttribute('readonly', 'readonly');
         skuEl.placeholder = 'SKU detectado…';
-        const photoRow = document.getElementById('photoRow'); if(photoRow) photoRow.style.display = 'none';
-        const qrLabel = document.getElementById('qrLabel'); if(qrLabel) qrLabel.style.display = 'none';
-        (async ()=>{ try{ await start(); }catch(e){ cameraRow && (cameraRow.style.display=''); } })();
+        // Ocultar los botones de limpiar y asociar fotos en móvil
+        const photoRow = document.getElementById('photoRow');
+        if(photoRow) photoRow.style.display = 'none';
+        const clearBtn = document.getElementById('clearBtn');
+        if(clearBtn) clearBtn.style.display = 'none';
+        // Ocultar el label
+        const qrLabel = document.getElementById('qrLabel');
+        if(qrLabel) qrLabel.style.display = 'none';
       }
 
-      // Botones
       startBtn.addEventListener('click', async () => {
-        if (!audioUnlocked) { try { await beep.play(); beep.pause(); beep.currentTime = 0; audioUnlocked = true; } catch {} }
-        const cameraRow = document.getElementById('cameraRow'); if (cameraRow) cameraRow.style.display = 'none';
+        // Intentar desbloquear el contexto de audio en el primer clic
+        if (!audioUnlocked) {
+          try {
+            await beep.play();
+            beep.pause();
+            beep.currentTime = 0;
+            audioUnlocked = true;
+          } catch {}
+        }
         start();
       });
-
-      // “Asociar fotos”
       photoBtn.addEventListener('click', ()=>{
         const sku = skuEl.value.trim();
-        if (!sku){ log(msgEl, 'Primero escanea o ingresa un SKU.', 'warn'); return; }
-        uploadViaForm(sku, msgEl);
+        if(!sku){
+          log('Primero escanea o ingresa un SKU.');
+          return;
+        }
+        // Abre Google Forms con el SKU prellenado
+        const formUrl = 'https://docs.google.com/forms/d/e/1FAIpQLScua9KznddTAn4XUVzRsLc4zmzeDzVg7gkhNLbklKp4yOQYBg/viewform?usp=pp_url&entry.5441271=' + encodeURIComponent(sku);
+        window.open(formUrl, '_blank');
       });
 
       window.addEventListener('pagehide', stop);
@@ -281,4 +272,3 @@
   </script>
 </body>
 </html>
-
