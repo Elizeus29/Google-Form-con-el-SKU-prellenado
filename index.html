@@ -21,12 +21,15 @@
 <body>
   <div class="wrap">
     <div class="card">
-      <div class="row">
+      <div class="row" id="cameraRow">
         <button class="btn" id="startBtn">Iniciar cámara</button>
       </div>
       <video id="preview" playsinline muted autoplay></video>
       <div class="row">
         <input id="sku" class="input" placeholder="SKU detectado…" readonly />
+      </div>
+      <div id="qr" style="display:none;justify-content:center;margin:16px 0;"></div>
+      <div class="row" id="photoRow">
         <button class="btn" id="photoBtn">Asociar fotos</button>
       </div>
       <div id="msg" class="msg"></div>
@@ -39,6 +42,9 @@
   <!-- Sonido de lector de barra -->
   <audio id="beep" src="scanner-beep.mp3" preload="auto"></audio>
 
+  <!-- QRCode.js para escritorio -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
   <!-- Tu código, NO type=module, y después de la librería -->
   <script>
     window.addEventListener('DOMContentLoaded', () => {
@@ -46,7 +52,7 @@
         document.getElementById('msg').textContent = 'Error: ZXingBrowser no está disponible. Verifica la conexión a internet o la carga de la librería.';
         return;
       }
-      const videoEl  = document.getElementById('preview');
+  const videoEl  = document.getElementById('preview');
       const startBtn = document.getElementById('startBtn');
       const photoBtn = document.getElementById('photoBtn');
       const skuEl    = document.getElementById('sku');
@@ -96,6 +102,17 @@
                 beep.currentTime = 0;
                 beep.play().catch(()=>{});
               }
+              // Si es escritorio, mostrar QR
+              if(isDesktop){
+                const qrDiv = document.getElementById('qr');
+                qrDiv.innerHTML = '';
+                if(v.length>0){
+                  qrDiv.style.display = 'flex';
+                  new QRCode(qrDiv, { text: v, width: 160, height: 160, colorDark: '#222', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
+                }else{
+                  qrDiv.style.display = 'none';
+                }
+              }
             }
           }
         });
@@ -125,6 +142,44 @@
           }
           startBtn.disabled = false;
         }
+      }
+
+      // Detectar si es escritorio
+      const isDesktop = !/android|iphone|ipad|ipod|mobile|windows phone/i.test(navigator.userAgent);
+      if(isDesktop){
+        // Oculta el botón de cámara y el video solo en escritorio
+        const cameraRow = document.getElementById('cameraRow');
+        if(cameraRow) cameraRow.style.display = 'none';
+        if(videoEl) videoEl.style.display = 'none';
+        skuEl.removeAttribute('readonly');
+        skuEl.placeholder = 'Ingrese o escanee SKU/ASKU…';
+        // Mostrar QR al cambiar input
+        const qrDiv = document.getElementById('qr');
+        let qr = null;
+        function showQR(val){
+          qrDiv.innerHTML = '';
+          if(val && val.length>0){
+            qrDiv.style.display = 'flex';
+            qr = new QRCode(qrDiv, { text: val, width: 160, height: 160, colorDark: '#222', colorLight: '#fff', correctLevel: QRCode.CorrectLevel.H });
+          }else{
+            qrDiv.style.display = 'none';
+          }
+        }
+        skuEl.addEventListener('input', e=>{
+          showQR(skuEl.value.trim());
+        });
+        // Mover el botón de asociar fotos debajo del QR
+        const photoRow = document.getElementById('photoRow');
+        if(photoRow && qrDiv){
+          qrDiv.parentNode.insertBefore(photoRow, qrDiv.nextSibling);
+        }
+      }else{
+        // En móvil, asegurarse que el video y el botón de cámara estén visibles
+        const cameraRow = document.getElementById('cameraRow');
+        if(cameraRow) cameraRow.style.display = '';
+        if(videoEl) videoEl.style.display = '';
+        skuEl.setAttribute('readonly', 'readonly');
+        skuEl.placeholder = 'SKU detectado…';
       }
 
       startBtn.addEventListener('click', async () => {
