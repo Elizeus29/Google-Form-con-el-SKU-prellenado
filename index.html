@@ -56,7 +56,7 @@
         return;
       }
   const videoEl  = document.getElementById('preview');
-      const startBtn = document.getElementById('startBtn');
+  const startBtn = document.getElementById('startBtn');
       const photoBtn = document.getElementById('photoBtn');
       const skuEl    = document.getElementById('sku');
   const msgEl    = document.getElementById('msg');
@@ -69,6 +69,14 @@
         skuEl.dispatchEvent(event);
         skuEl.focus();
       });
+
+      // Si es móvil, ocultar el botón y abrir la cámara automáticamente
+      if (!isDesktop) {
+        const cameraRow = document.getElementById('cameraRow');
+        if (cameraRow) cameraRow.style.display = 'none';
+        // Iniciar cámara automáticamente
+        setTimeout(() => { start(); }, 300);
+      }
       const beep     = document.getElementById('beep');
 
       // USAR ZXingBrowser (no ZXing)
@@ -157,13 +165,13 @@
   // Detectar si es escritorio
       const isDesktop = !/android|iphone|ipad|ipod|mobile|windows phone/i.test(navigator.userAgent);
       if(isDesktop){
-        // Mostrar título superior en escritorio
-        const desktopTitle = document.getElementById('desktopTitle');
-        if(desktopTitle) desktopTitle.style.display = '';
-        // Oculta el botón de cámara y el video solo en escritorio
-        const cameraRow = document.getElementById('cameraRow');
-        if(cameraRow) cameraRow.style.display = 'none';
-        if(videoEl) videoEl.style.display = 'none';
+  // Mostrar título superior en escritorio
+  const desktopTitle = document.getElementById('desktopTitle');
+  if(desktopTitle) desktopTitle.style.display = '';
+  // Oculta el botón de cámara y el video solo en escritorio
+  const cameraRow = document.getElementById('cameraRow');
+  if(cameraRow) cameraRow.style.display = 'none';
+  if(videoEl) videoEl.style.display = 'none';
   skuEl.removeAttribute('readonly');
   skuEl.placeholder = 'Ingrese o escanee SKU/ASKU…';
   // Autofoco en escritorio
