@@ -107,16 +107,22 @@
         await reader.decodeFromVideoDevice(id, videoEl, (result, err) => {
           if(result){
             const v = (result.getText()||"").trim();
-              if (v && skuEl.value !== v) {
-                skuEl.value = v;
-                log("Detectado: " + v);
-                if (beep) {
-                  beep.pause();
-                  beep.currentTime = 0;
-                  beep.play().catch(() => {});
-                }
-                // Redirigir siempre al form de carga de imagen tras escanear
+            if (v && skuEl.value !== v) {
+              skuEl.value = v;
+              log("Detectado: " + v);
+              if (beep) {
+                beep.pause();
+                beep.currentTime = 0;
+                beep.play().catch(() => {});
+              }
+              // Si es móvil, redirigir al Google Form con el SKU prellenado
+              if (!isDesktop) {
+                const formUrl = 'https://docs.google.com/forms/d/e/1FAIpQLScua9KznddTAn4XUVzRsLc4zmzeDzVg7gkhNLbklKp4yOQYBg/viewform?usp=pp_url&entry.5441271=' + encodeURIComponent(v);
+                window.location.href = formUrl;
+              } else {
+                // En escritorio, abrir el selector de archivo como antes
                 uploadViaForm(v, msgEl);
+              }
             }
           }
         });
